@@ -1,0 +1,256 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+
+import 'core_bridge.dart';
+import 'live_models.dart';
+import 'live_repository.dart';
+import 'live_sources.dart';
+import 'screen_awake.dart';
+
+/// 已经有画面时不能判成卡死。直播经常在 `playing` 变成 true 之后才装上
+/// 超时计时，如果到点不再看当前状态，正在播的画面也会被盖上中断提示并重连。
+bool liveLineHasPicture({
+  required bool playing,
+  required int width,
+  required Duration position,
+  required Duration started,
+}) => playing || width > 0 || position > started;
+
+/// 直播播放状态：顶部内嵌播放器与全屏播放共用同一实例，换台不重建引擎。
+class LivePlaybackController extends ChangeNotifier {
+  LivePlaybackController({required this.repository});
+
+  static const maxRetries = 3;
+  static const _reconnectDelay = Duration(seconds: 2);
+
+  /// 起播后迟迟没有画面的判定时限。列表型直播源的代理线路会返回正常清单却
+  /// 一直卡在缓冲，不触发错误事件，只靠 error 回调永远等不到换线。
+  static const _stallTimeout = Duration(seconds: 15);
+
+  final LiveRepository repository;
+
+  final _screenAwake = ScreenAwake();
+  final _subscriptions = <StreamSubscription<dynamic>>[];
+  Timer? _reconnect;
+  Timer? _stall;
+
+  Player? _player;
+  VideoController? _controller;
+  LiveSource? _source;
+  List<LiveChannel> _channels = const [];
+  int _index = 0;
+  int _generation = 0;
+  int _retries = 0;
+  int _route = 0;
+  bool _loading = false;
+  bool _buffering = false;
+  bool _disposed = false;
+  String? _error;
+
+  Player? get player => _player;
+  VideoController? get controller => _controller;
+  LiveSource? get source => _source;
+  List<LiveChannel> get channels => _channels;
+  LiveChannel? get channel => _channels.isEmpty
+      ? null
+      : _channels[_index.clamp(0, _channels.length - 1)];
+  int get index => _index;
+  int get count => _channels.length;
+  bool get loading => _loading;
+  bool get buffering => _buffering;
+  bool get ready => _player != null;
+  int get route => _route;
+  String? get error => _error;
+
+  void _ensurePlayer() {
+    if (_player != null || _disposed) return;
+    final player = Player();
+    _player = player;
+    _controller = VideoController(player);
+    _subscriptions.add(player.stream.error.listen(_onError));
+    _subscriptions.add(
+      player.stream.buffering.listen((value) {
+        if (_disposed || value == _buffering) return;
+        _buffering = value;
+        notifyListeners();
+      }),
+    );
+    _subscriptions.add(
+      player.stream.playing.listen((value) {
+        if (_disposed || !value) return;
+        _stall?.cancel();
+        if (_error == null) return;
+        _error = null;
+        notifyListeners();
+      }),
+    );
+    _subscriptions.add(
+      player.stream.videoParams.listen((params) {
+        final width = params.dw ?? params.w ?? 0;
+        if (!_disposed && width > 0) _stall?.cancel();
+      }),
+    );
+  }
+
+  void _armStallWatch() {
+    _stall?.cancel();
+    final player = _player;
+    if (player == null) return;
+    final started = player.state.position;
+    if (_lineHasPicture(player.state, started)) return;
+    _stall = Timer(_stallTimeout, () {
+      if (_disposed || _error != null) return;
+      final current = _player;
+      if (current != null && _lineHasPicture(current.state, started)) return;
+      _onError('当前线路长时间没有画面');
+    });
+  }
+
+  bool _lineHasPicture(PlayerState state, Duration started) =>
+      liveLineHasPicture(
+        playing: state.playing,
+        width: state.width ?? 0,
+        position: state.position,
+        started: started,
+      );
+
+  /// 切换直播源或分类：重置频道表并按需播放第一条。
+  Future<void> load(
+    LiveSource source,
+    List<LiveChannel> channels, {
+    int index = 0,
+    bool autoplay = true,
+  }) async {
+    _source = source;
+    _channels = List.of(channels);
+    _index = channels.isEmpty ? 0 : index.clamp(0, channels.length - 1);
+    _retries = 0;
+    _route = 0;
+    _error = null;
+    if (!autoplay || channels.isEmpty) {
+      notifyListeners();
+      return;
+    }
+    try {
+      _ensurePlayer();
+    } catch (error) {
+      _error = '直播播放器无法启动：$error';
+      notifyListeners();
+      return;
+    }
+    await play(_index);
+  }
+
+  Future<void> play(int index, {bool reconnect = false}) async {
+    if (_disposed || _channels.isEmpty) return;
+    final channel = _channels[index.clamp(0, _channels.length - 1)];
+    final source = _source;
+    if (source == null) return;
+    if (!reconnect) _retries = 0;
+    if (!reconnect && index != _index) _route = 0;
+    final token = ++_generation;
+    _index = index;
+    _loading = true;
+    if (!reconnect) _error = null;
+    notifyListeners();
+    try {
+      _ensurePlayer();
+      final player = _player;
+      if (player == null) throw AppFailure('直播播放器无法启动');
+      final plan = await _resolve(source, channel);
+      if (_disposed || token != _generation) return;
+      await player.open(
+        Media(
+          plan.url,
+          httpHeaders: plan.headers.isEmpty ? null : plan.headers,
+        ),
+      );
+      if (_disposed || token != _generation) return;
+      _loading = false;
+      _error = null;
+      _screenAwake.enable();
+      _armStallWatch();
+      notifyListeners();
+    } catch (error) {
+      if (_disposed || token != _generation) return;
+      _loading = false;
+      _error = '$error';
+      notifyListeners();
+    }
+  }
+
+  /// 直连型直播源（面板 / 列表）支持在同一频道内切换线路。
+  Future<LivePlayback> _resolve(LiveSource source, LiveChannel channel) {
+    final multiRoute =
+        source.protocol == LiveProtocol.pingtai ||
+        source.protocol == LiveProtocol.list;
+    if (_route > 0 && multiRoute && channel.urls.length > _route) {
+      return Future.value(
+        LivePlayback(url: channel.urls[_route], headers: channel.headers),
+      );
+    }
+    return repository.playback(source, channel);
+  }
+
+  /// 切换到指定线路并重新播放。
+  Future<void> playRoute(int route) {
+    _route = route < 0 ? 0 : route;
+    return play(_index);
+  }
+
+  /// 上一台 / 下一台，越界时环绕。
+  void switchBy(int delta) {
+    if (_channels.length < 2) return;
+    final next = (_index + delta + _channels.length) % _channels.length;
+    unawaited(play(next));
+  }
+
+  Future<void> retry() => play(_index, reconnect: true);
+
+  void _onError(String message) {
+    if (_disposed) return;
+    _loading = false;
+    _error = message.isEmpty ? '直播中断' : message;
+    notifyListeners();
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    final channel = this.channel;
+    // 线路数多于固定重试次数时必须走完整批线路：列表型源的可用线路可能排在
+    // 最后一条，只允许推进 3 次就永远够不到它，用户只能手动一路切过去。
+    final routes = channel?.urls.length ?? 0;
+    final limit = routes > 1 ? routes : maxRetries;
+    if (_retries >= limit) return;
+    _retries++;
+    // 实测列表型直播源的代理线路质量波动很大（同一批前缀会交替返回
+    // 404/500 或掉到十几 KB/s），重连必须换线路，否则几次重试全部
+    // 打在同一条已经劣化的线路上，表现为长时间转圈。
+    if (channel != null && channel.urls.length > 1) {
+      _route = (_route + 1) % channel.urls.length;
+    }
+    _reconnect?.cancel();
+    _reconnect = Timer(_reconnectDelay, () {
+      if (!_disposed) unawaited(play(_index, reconnect: true));
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _reconnect?.cancel();
+    _stall?.cancel();
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _subscriptions.clear();
+    _screenAwake.disable();
+    _player?.dispose();
+    _player = null;
+    _controller = null;
+    super.dispose();
+  }
+}
