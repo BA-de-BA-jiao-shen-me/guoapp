@@ -695,6 +695,7 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		}
 		engine.mu.Unlock()
 		ctx = context.WithValue(ctx, libraryKnownKey{}, known)
+		ctx = context.WithValue(ctx, librarySinglePageKey{}, true)
 		if page > 1 {
 			ctx = context.WithValue(ctx, libraryMoreKey{}, true)
 		}

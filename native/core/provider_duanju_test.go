@@ -34,8 +34,9 @@ func TestDuanjuRegistryKeepsDistinctIdentitiesFromExistingSources(t *testing.T) 
 	for _, source := range existing {
 		seen[source] = true
 	}
-	if len(duanjuProviderCatalog) != 27 {
-		t.Fatalf("duanju catalog should register 27 sources, got %d", len(duanjuProviderCatalog))
+	// 0.2.117 下线皮果后剩 26 个站源。
+	if len(duanjuProviderCatalog) != 26 {
+		t.Fatalf("duanju catalog should register 26 sources, got %d", len(duanjuProviderCatalog))
 	}
 	for _, spec := range duanjuProviderCatalog {
 		if seen[spec.ID] {
@@ -445,8 +446,12 @@ func TestDuanjuRejectsMismatchedSourceIDsAndCategories(t *testing.T) {
 func TestDuanjuSourceAvailabilityFollowsBuildVariant(t *testing.T) {
 	previous := buildAllSources
 	buildAllSources = "false"
-	if nativeSourceAvailable(sourceYaguo) {
-		t.Fatal("hongguo-only build must not expose duanju sources")
+	// 绿果鉴按 nativeGreenSources 白名单开放已确认的绿色短剧站，成人站源必须不可用。
+	if !nativeSourceAvailable(sourceYaguo) || !nativeSourceAvailable(sourceWuguo) {
+		t.Fatal("green build must expose whitelisted duanju sources")
+	}
+	if nativeSourceAvailable(sourceChaoguo) || nativeSourceAvailable(sourceYanguo) {
+		t.Fatal("green build must not expose adult duanju sources")
 	}
 	buildAllSources = "true"
 	if !nativeSourceAvailable(sourceYaguo) || !nativeSourceAvailable(sourceWuguo) {

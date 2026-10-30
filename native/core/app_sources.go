@@ -442,17 +442,19 @@ func (engine *nativeEngine) loadSourceCatalogCategory(ctx context.Context, sourc
 		return nil
 	}
 	key := nativeCatalogKey(source, category)
+	if rescanHead {
+		if err := engine.loadSourceCatalogCategoryPage(ctx, source, category, 1); err != nil {
+			return err
+		}
+	}
+	// 续页位置必须在刷新首页之后读取：首次加载时首页刷新会写入第 1 页的状态，
+	// 先读会让续页再次从第 1 页开始，重复请求首页。
 	engine.mu.Lock()
 	state, found := engine.catalogStates[key]
 	engine.mu.Unlock()
 	tail := 1
 	if found && state.HasMore {
 		tail = max(1, state.Page+1)
-	}
-	if rescanHead {
-		if err := engine.loadSourceCatalogCategoryPage(ctx, source, category, 1); err != nil {
-			return err
-		}
 	}
 	for loaded := 0; loaded < pages; loaded++ {
 		page := tail + loaded

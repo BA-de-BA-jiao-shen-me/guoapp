@@ -28,6 +28,9 @@ type libraryUpdateKey struct{}
 
 type libraryKnownKey struct{}
 
+// librarySinglePageKey 标记交互式分页请求：每个分类只取一页，翻页由调用方逐页推进。
+type librarySinglePageKey struct{}
+
 func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Drama, error) {
 	return downloader.fetchHongguoAppCatalogCategory(ctx, "")
 }
@@ -64,6 +67,9 @@ func (downloader *Downloader) fetchHongguoAppCatalogCategory(ctx context.Context
 	}
 	if pageLimit > 200 {
 		pageLimit = 200
+	}
+	if single, _ := ctx.Value(librarySinglePageKey{}).(bool); single {
+		pageLimit = 1
 	}
 	headLimit := min(pageLimit, 3)
 	roundLimit := pageLimit
