@@ -23,7 +23,7 @@ def build_core(simulator=False, variant=BuildVariant()):
         raise SystemExit('iOS 构建需要 macOS 和完整 Xcode。')
     go = shutil.which('go')
     if not go:
-        raise SystemExit('请安装 Go 1.24.1 或更新版本。')
+        raise SystemExit('请安装 Go 1.26.0 或更新版本。')
     environment = os.environ.copy()
     environment.setdefault('GOPROXY', 'https://goproxy.cn,direct')
     environment.setdefault('GOSUMDB', 'off')

@@ -9,7 +9,7 @@
 ## 环境
 
 - Flutter 3.47.4，Dart 3.12 或更新版本
-- Go 1.24.1 或更新版本
+- Go 1.26.0 或更新版本
 - Python 3.10 或更新版本
 - Android：JDK 17、Android SDK、NDK `28.2.13676358`，并设置 `ANDROID_HOME`
 - Windows：Visual Studio 的「使用 C++ 的桌面开发」，以及 MinGW-w64 x64

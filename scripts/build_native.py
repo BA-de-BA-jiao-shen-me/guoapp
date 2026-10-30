@@ -21,7 +21,7 @@ environment.setdefault('GOSUMDB', 'off')
 environment['CGO_ENABLED'] = '1'
 go = shutil.which('go')
 if not go:
-    raise SystemExit('请先安装 Go 1.24.1 或更新版本。')
+    raise SystemExit('请先安装 Go 1.26.0 或更新版本。')
 bootstrap_env = environment.copy()
 bootstrap_env['GOSUMDB'] = os.environ.get('GOSUMDB', 'sum.golang.org')
 if bootstrap_env['GOSUMDB'] == 'off':
