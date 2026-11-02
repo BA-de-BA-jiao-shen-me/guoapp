@@ -110,6 +110,9 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/duanju_core.dll"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT Runtime)
+# VS 18 自带的 CMake 在 InstallRequiredSystemLibraries 内部按安装前缀拼 “/..” 目录，
+# 而本工程的安装前缀是生成器表达式，会生成非法路径；这里只取运行库列表，自己安装。
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
 include(InstallRequiredSystemLibraries)
+install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
