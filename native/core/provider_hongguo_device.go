@@ -198,7 +198,10 @@ func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context,
 	}
 	var lastErr error
 	for _, contentType := range []string{"1004", "1"} {
-		result, err := downloader.hongguoUnsignedMedia(ctx, device, videoID, contentType)
+		result, err := downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, contentType)
+		if err != nil && ctx.Err() == nil {
+			result, err = downloader.hongguoUnsignedMedia(ctx, device, videoID, contentType)
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -230,6 +233,24 @@ func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context,
 		lastErr = errors.New("红果注册设备未返回正片")
 	}
 	return providerMedia{}, lastErr
+}
+
+// hongguoSignedRegisteredMedia 用注册得到的真实设备号，并带上六个播放签名头请求取流。
+// 2026-11 起上游对不带签名的取流请求回 HTTP 200、空正文（0.2.129 的无签名方案失效）；
+// 随机设备号带签名同样是空正文，只有“注册设备 + 签名”能拿到 video_model。
+func (downloader *Downloader) hongguoSignedRegisteredMedia(ctx context.Context, device hongguoPlaybackDevice, videoID, contentType string) (map[string]any, error) {
+	payload := map[string]any{
+		"biz_param": map[string]any{
+			"detail_page_version": 0, "device_level": 3, "disable_digg_stat": false,
+			"need_all_video_definition": true, "need_mp4_align": false, "use_os_player": false,
+			"use_server_dns": false, "video_platform": 1024,
+		},
+		"mixed_video_id_map": map[string]any{contentType: []string{videoID}},
+	}
+	signed := context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
+	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, hongguoMediaPath, url.Values{
+		"device_id": {device.DeviceID}, "iid": {device.Install},
+	}, payload, false)
 }
 
 func (downloader *Downloader) hongguoUnsignedMedia(ctx context.Context, device hongguoPlaybackDevice, videoID, contentType string) (map[string]any, error) {
