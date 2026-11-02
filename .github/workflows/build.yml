@@ -75,7 +75,8 @@ jobs:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
-      - run: sdkmanager 'ndk;28.2.13676358'
+      # 新版 ubuntu runner 不再把 sdkmanager 放进 PATH，按 ANDROID_HOME 调用。
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;28.2.13676358' > /dev/null
       - name: Configure Android signing
         run: python scripts/configure_signing.py
         env:
@@ -119,9 +120,11 @@ jobs:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
+      # static: 1 在新版 choco mingw 上会因缺少 libpthread.dll.a 失败，改为不删动态库。
       - uses: egor-tensin/setup-mingw@v2
         with:
           platform: x64
+          static: 0
       - run: python scripts/build_windows.py ${{ matrix.arguments }}
       - run: choco install ffmpeg --no-progress -y
       - run: python scripts/smoke_windows.py ${{ matrix.arguments }}
