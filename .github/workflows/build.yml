@@ -96,7 +96,7 @@ jobs:
           retention-days: 14
   windows:
     needs: checks
-    runs-on: windows-latest
+    runs-on: windows-2025  # windows-latest 已换成 VS 18，flutter windows 安装步骤失败
     timeout-minutes: 45
     strategy:
       fail-fast: false
