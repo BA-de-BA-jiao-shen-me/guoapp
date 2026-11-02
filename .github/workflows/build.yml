@@ -126,6 +126,9 @@ jobs:
           platform: x64
           static: 0
       - run: python scripts/build_windows.py ${{ matrix.arguments }}
+      - name: Diagnose Windows install failure
+        if: failure()
+        run: cmake --install build/windows/x64 --config Release --verbose
       - run: choco install ffmpeg --no-progress -y
       - run: python scripts/smoke_windows.py ${{ matrix.arguments }}
       - uses: actions/upload-artifact@v4
