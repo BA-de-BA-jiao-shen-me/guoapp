@@ -20,12 +20,27 @@ const fanqieAudiobookBoards = [
   FanqieAudiobookBoard('女生听书', 17, 0),
 ];
 
+class AudiobookSegment {
+  const AudiobookSegment(this.text, this.start);
+
+  final String text;
+  final double start;
+}
+
 class AudiobookLine {
-  const AudiobookLine(this.text, this.start, this.end);
+  const AudiobookLine(
+    this.text,
+    this.start,
+    this.end, [
+    this.segments = const [],
+  ]);
 
   final String text;
   final double start;
   final double end;
+
+  /// 逐句时间戳（仅来自带时间轴的听书正文）；为空时整段作为一个单位。
+  final List<AudiobookSegment> segments;
 }
 
 class FanqieBook {
@@ -292,6 +307,68 @@ List<AudiobookLine> paceAudiobookLines(List<String> texts, double duration) {
     cursor = end;
   }
   return lines;
+}
+
+/// 把原生 `audiobookText` 返回的段落换成带时间的行。
+/// 每段都有时间戳时用服务端逐句时间；缺任何一段就整体退回按字数比例分配。
+List<AudiobookLine> audiobookTimedLines(Object? decoded, double duration) {
+  final root = decoded is Map ? decoded : const {};
+  final rows = root['paragraphs'];
+  if (rows is! List || rows.isEmpty) return const [];
+  final texts = <String>[];
+  final starts = <double>[];
+  final segments = <List<AudiobookSegment>>[];
+  for (final row in rows) {
+    if (row is! Map) continue;
+    final text = '${row['text'] ?? ''}'.trim();
+    if (text.isEmpty) continue;
+    texts.add(text);
+    starts.add((row['start'] as num?)?.toDouble() ?? -1);
+    final parts = row['segments'];
+    segments.add([
+      if (parts is List)
+        for (final part in parts)
+          if (part is Map && '${part['text'] ?? ''}'.isNotEmpty)
+            AudiobookSegment(
+              '${part['text']}',
+              (part['start'] as num?)?.toDouble() ?? -1,
+            ),
+    ]);
+  }
+  if (texts.isEmpty) return const [];
+  if (starts.any((start) => start < 0)) {
+    return paceAudiobookLines(texts, duration);
+  }
+  final lines = <AudiobookLine>[];
+  for (var index = 0; index < texts.length; index++) {
+    final next = index + 1 < texts.length ? starts[index + 1] : duration;
+    final start = index == 0 ? 0.0 : starts[index];
+    final end = next > start ? next : start;
+    lines.add(AudiobookLine(texts[index], start, end, segments[index]));
+  }
+  return lines;
+}
+
+/// 当前句在段内的序号；没有逐句时间时返回 -1。
+int audiobookSegmentAt(AudiobookLine line, double seconds) {
+  if (line.segments.isEmpty) return -1;
+  var found = 0;
+  for (var index = 0; index < line.segments.length; index++) {
+    if (line.segments[index].start <= seconds) found = index;
+  }
+  return found;
+}
+
+/// 双击位置的字符偏移落在哪一句，返回该句起点；没有逐句时间时返回整段起点。
+double audiobookSeekForOffset(AudiobookLine line, int offset) {
+  var cursor = 0;
+  for (final segment in line.segments) {
+    cursor += segment.text.length;
+    if (offset < cursor) {
+      return segment.start < line.start ? line.start : segment.start;
+    }
+  }
+  return line.start;
 }
 
 int audiobookLineAt(List<AudiobookLine> lines, double seconds) {

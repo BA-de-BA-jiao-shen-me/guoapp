@@ -12,7 +12,8 @@ import (
 	"testing"
 )
 
-func TestHongguoPlaybackRequestSkipsSignatureAndPlatform(t *testing.T) {
+// 上游 2026-11 起对不带签名的注册设备取流回空正文：必须先用注册设备号带六个签名头请求。
+func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 	const videoID = "7694655440692448281"
 	var body map[string]any
 	var sawRegister bool
@@ -28,15 +29,12 @@ func TestHongguoPlaybackRequestSkipsSignatureAndPlatform(t *testing.T) {
 			t.Errorf("path %s", request.URL.Path)
 		}
 		for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Ladon", "X-Argus", "X-Helios", "X-Medusa"} {
-			if request.Header.Get(name) != "" {
-				t.Errorf("unexpected %s", name)
+			if request.Header.Get(name) == "" {
+				t.Errorf("missing %s", name)
 			}
 		}
 		if request.URL.Query().Get("device_id") != "7123456789012345" || request.URL.Query().Get("iid") != "7123456789012346" {
 			t.Errorf("identity %s", request.URL.RawQuery)
-		}
-		if !strings.Contains(request.URL.RawQuery, "resolution=1280%2A2772") || request.Header.Get("User-Agent") != hongguoPlaybackUserAgent {
-			t.Errorf("query %s ua %s", request.URL.RawQuery, request.Header.Get("User-Agent"))
 		}
 		if json.NewDecoder(request.Body).Decode(&body) != nil {
 			t.Error("body")
@@ -52,6 +50,29 @@ func TestHongguoPlaybackRequestSkipsSignatureAndPlatform(t *testing.T) {
 	ids, _ := mixed["1004"].([]any)
 	if param["video_platform"] != json.Number("1024") && param["video_platform"] != float64(1024) || param["need_all_video_definition"] != true || len(ids) != 1 || ids[0] != videoID {
 		t.Fatalf("payload %+v", body)
+	}
+}
+
+func TestHongguoRegisteredMediaFallsBackToUnsigned(t *testing.T) {
+	const videoID = "7694655440692448281"
+	var signed, unsigned int
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
+		}
+		if request.Header.Get("X-Argus") != "" {
+			signed++
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		unsigned++
+		if request.Header.Get("User-Agent") != hongguoPlaybackUserAgent {
+			t.Errorf("ua %s", request.Header.Get("User-Agent"))
+		}
+		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+videoID+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/unsigned.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
+	})
+	media, err := d.resolveHongguoRegisteredMedia(context.Background(), videoID)
+	if err != nil || media.URL != "https://cdn.example/unsigned.mp4" || signed == 0 || unsigned == 0 {
+		t.Fatalf("%v signed %d unsigned %d %+v", err, signed, unsigned, media)
 	}
 }
 

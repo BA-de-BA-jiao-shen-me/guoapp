@@ -96,4 +96,52 @@ void main() {
       throwsA(isA<AppFailure>()),
     );
   });
+
+  test('带时间轴的正文按逐句时间对齐，双击句子跳到该句', () {
+    final decoded = {
+      'timed': true,
+      'paragraphs': [
+        {
+          'text': '擂台之上，叶枫冷笑。',
+          'start': 1.37,
+          'segments': [
+            {'text': '擂台之上，', 'start': 1.37},
+            {'text': '叶枫冷笑。', 'start': 2.39},
+          ],
+        },
+        {
+          'text': '人群骂声。',
+          'start': 6.17,
+          'segments': [
+            {'text': '人群骂声。', 'start': 6.17},
+          ],
+        },
+      ],
+    };
+    final lines = audiobookTimedLines(decoded, 20);
+    expect(lines, hasLength(2));
+    expect(lines[0].start, 0);
+    expect(lines[0].end, 6.17);
+    expect(lines[1].start, 6.17);
+    expect(lines[1].end, 20);
+    expect(audiobookLineAt(lines, 3), 0);
+    expect(audiobookLineAt(lines, 7), 1);
+    expect(audiobookSegmentAt(lines[0], 1.5), 0);
+    expect(audiobookSegmentAt(lines[0], 3), 1);
+    expect(audiobookSeekForOffset(lines[0], 6), 2.39);
+    expect(audiobookSeekForOffset(lines[0], 1), 1.37);
+  });
+
+  test('缺时间戳时退回按字数比例对齐', () {
+    final lines = audiobookTimedLines({
+      'paragraphs': [
+        {'text': '一二', 'start': -1},
+        {'text': '三四五六', 'start': -1},
+      ],
+    }, 30);
+    expect(lines, hasLength(2));
+    expect(lines[0].end, closeTo(10, 0.001));
+    expect(lines[1].segments, isEmpty);
+    expect(audiobookTimedLines(const {}, 30), isEmpty);
+  });
 }

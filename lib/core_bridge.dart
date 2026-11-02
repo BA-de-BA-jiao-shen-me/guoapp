@@ -219,6 +219,10 @@ abstract class AppRepository {
     String bookId,
     String chapterId,
   ) async => throw AppFailure('当前环境不支持听书播放');
+
+  /// 听书章节正文：`paragraphs` 每项含 `text`、`start`（秒，无时间戳为 -1）和逐句 `segments`。
+  Future<Map<String, dynamic>> audiobookText(String chapterId) async =>
+      throw AppFailure('当前环境不支持听书原文');
 }
 
 class NativeRepository extends AppRepository {
@@ -1016,4 +1020,8 @@ class NativeRepository extends AppRepository {
     'query': bookId,
     'category': chapterId,
   });
+
+  @override
+  Future<Map<String, dynamic>> audiobookText(String chapterId) =>
+      _call({'action': 'audiobookText', 'category': chapterId});
 }
