@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'fixtures.dart';
 import 'interface_fixtures.dart';
 
 void main() {
@@ -19,7 +20,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final store = LocalStore(await SharedPreferences.getInstance());
     addTearDown(store.dispose);
-    return store;
+    return withAdultSources(store);
   }
 
   void viewport(WidgetTester tester, Size size, [double scale = 1]) {
@@ -33,7 +34,8 @@ void main() {
   testWidgets(
     'refresh rotates during a request and stops after success or failure',
     (tester) async {
-      viewport(tester, const Size(390, 844));
+      // 宽度不足 400 时“更新剧库”收进“更多”菜单（见 CHANGELOG 浏览说明），这里用常显标题栏按钮的宽度。
+      viewport(tester, const Size(430, 932));
       final repository = InterfaceRepository();
       await tester.pumpWidget(
         DuanjuApp(repository: repository, store: await localStore()),
@@ -78,7 +80,8 @@ void main() {
         expect(tester.widget<RotationTransition>(rotation).turns.value, 0);
         expect(tester.widget<IconButton>(button).onPressed, isNotNull);
         expect(find.text('短标题'), findsOneWidget);
-        if (fails) expect(find.text('合成更新失败'), findsOneWidget);
+        // 已有内容时更新失败只保留原列表，不再在分类下显示异常提示（见 CHANGELOG 浏览说明）。
+        if (fails) expect(find.text('合成更新失败'), findsNothing);
       }
       expect(tester.takeException(), isNull);
     },
@@ -96,7 +99,14 @@ void main() {
       if (SourceGroup.fromSources(SourceSite.values).length <= 1) return;
       await tester.tap(find.byKey(const ValueKey('source-switch')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text(name).last);
+      // 全站源版的分组较多，菜单需要滚动；只在菜单项里找目标分组。
+      final item = find.descendant(
+        of: find.byType(PopupMenuItem<SourceGroup>),
+        matching: find.text(name),
+      );
+      await tester.ensureVisible(item);
+      await tester.pumpAndSettle();
+      await tester.tap(item);
       await tester.pumpAndSettle();
     }
 
@@ -119,7 +129,7 @@ void main() {
       }
       return;
     }
-    await select('黄豆');
+    await select('豆果');
     expect(find.byTooltip('VIP：显示'), findsOneWidget);
     await tester.tap(find.byTooltip('VIP：显示'));
     await tester.pumpAndSettle();
@@ -223,29 +233,35 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+        // 下载页已改版为“下载合集”：筛选、多选、本地媒体与队列操作都在标题栏，
+        // 状态筛选移入“筛选下载合集”对话框，标题栏下方只保留搜索框。
         final menu = find.byKey(const ValueKey('download-queue-actions'));
-        final filters = find.byKey(const ValueKey('download-filters'));
         final local = find.byKey(const ValueKey('download-local-media'));
+        final search = find.byType(TextField);
         expect(
           tester.getCenter(menu).dy,
-          closeTo(tester.getCenter(find.text('下载任务')).dy, .01),
+          closeTo(tester.getCenter(find.text('下载合集')).dy, .01),
         );
         expect(tester.getRect(menu).left, greaterThan(layout.$1.width / 2));
         expect(
           tester.getRect(menu).bottom,
-          lessThan(tester.getRect(filters).top),
+          lessThan(tester.getRect(search).top),
         );
         expect(
           tester.getRect(local).bottom,
-          lessThanOrEqualTo(tester.getRect(filters).top),
+          lessThanOrEqualTo(tester.getRect(search).top),
         );
-        final completed = find.byKey(
-          const ValueKey('download-filter-completed'),
+        await tester.tap(find.text(repository.jobs.first.drama.title).first);
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('download-task-task-0')),
+          findsOneWidget,
         );
-        final all = find.byKey(const ValueKey('download-filter-all'));
-        expect(tester.getRect(completed).top, tester.getRect(all).top);
-        await tester.ensureVisible(completed);
-        await tester.tap(completed);
+        await tester.tap(find.byTooltip('筛选下载合集'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('已下载'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('应用'));
         await tester.pumpAndSettle();
         expect(
           find.byKey(const ValueKey('download-task-task-0')),
@@ -259,13 +275,17 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('全部暂停'));
         await tester.pumpAndSettle();
-        expect(repository.commands, ['pauseAll:']);
+        // 队列操作作用于全部任务（不受筛选影响），按分集批量下发。
+        expect(repository.commands, ['pause:task-0']);
         expect(repository.jobs.where((job) => job.active), isEmpty);
         await tester.tap(menu);
         await tester.pumpAndSettle();
         await tester.tap(find.text('全部继续'));
         await tester.pumpAndSettle();
-        expect(repository.commands.last, 'resumeAll:');
+        expect(repository.commands.sublist(1), [
+          'resume:task-0',
+          'resume:task-1',
+        ]);
         expect(repository.jobs.where((job) => job.active).length, 2);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());

@@ -82,7 +82,9 @@ void main() {
   late LocalStore store;
   late _FakeRelay relay;
 
-  Future<RecommendationService> attach({Duration publishDelay = const Duration(milliseconds: 20)}) async {
+  Future<RecommendationService> attach({
+    Duration publishDelay = const Duration(milliseconds: 20),
+  }) async {
     final service = RecommendationService(
       preferences,
       publishDelay: publishDelay,
@@ -114,12 +116,13 @@ void main() {
   test('首次进入会生成本机身份并保存', () async {
     final service = await attach();
     expect(service.shortIdentity, isNot('未就绪'));
-    final saved = RecommendationStore(
-      preferences,
-    ).identity(store.profile.id);
+    final saved = RecommendationStore(preferences).identity(store.profile.id);
     expect(saved, isNotNull);
     expect(saved, matches(RegExp(r'^[0-9a-f]{64}$')));
-    expect(NostrIdentity.publicKeyOf(saved!), startsWith(service.shortIdentity));
+    expect(
+      NostrIdentity.publicKeyOf(saved!),
+      startsWith(service.shortIdentity),
+    );
     // 再次进入沿用同一个身份
     service.detach();
     final again = await attach();
@@ -143,12 +146,7 @@ void main() {
     // 单集长剧：只看时长这一条规则也能达标。
     for (var second = 5; second <= 610; second += 5) {
       service.observe(
-        _watch(
-          drama,
-          episode: 1,
-          position: second.toDouble(),
-          duration: 3600,
-        ),
+        _watch(drama, episode: 1, position: second.toDouble(), duration: 3600),
       );
     }
     await Future<void>.delayed(const Duration(milliseconds: 160));
@@ -207,7 +205,11 @@ void main() {
     }
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(service.myCount, 3);
-    expect(service.myEntries.map((entry) => entry.id), ['hongguo:3', 'hongguo:2', 'hongguo:1']);
+    expect(service.myEntries.map((entry) => entry.id), [
+      'hongguo:3',
+      'hongguo:2',
+      'hongguo:1',
+    ]);
 
     await service.removeMany([first.id, third.id]);
     await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -349,8 +351,8 @@ void main() {
       containsAll(<String>['都市', '古装']),
     );
 
-    service.toggleSource('hongguo');
-    expect(service.selectedSources, {'hongguo'});
+    // 新用户默认只选红果（recommendationDefaultSource）。
+    expect(service.selectedSources, {recommendationDefaultSource});
     expect(service.items, hasLength(2));
 
     service.toggleSource(recommendationAllSources);
@@ -447,7 +449,10 @@ void main() {
 
   test('站源可多选，全部与具体站源互斥', () async {
     final service = await attach();
-    final available = SourceSite.values.toList();
+    // 只取当前用户可见的站源：全站源版里成人站源默认被绿色模式隐藏。
+    final available = SourceSite.values
+        .where((site) => store.allowsSource(site.id))
+        .toList();
     final used = available.take(2).toList();
     for (final site in used) {
       final other = NostrIdentity.generate();
@@ -476,6 +481,9 @@ void main() {
       );
     }
     await Future<void>.delayed(const Duration(milliseconds: 260));
+    // 默认只选红果，先切到「全部」再验证多选。
+    expect(service.selectedSources, {recommendationDefaultSource});
+    service.toggleSource(recommendationAllSources);
     expect(service.items, hasLength(used.length));
 
     final first = used.first;
@@ -492,10 +500,10 @@ void main() {
     service.toggleSource(first.id);
     service.toggleSource(second.id);
     expect(service.selectedSources, {first.id, second.id});
-    expect(
-      service.items.map((row) => row.id).toSet(),
-      {'${first.id}:9', '${second.id}:9'},
-    );
+    expect(service.items.map((row) => row.id).toSet(), {
+      '${first.id}:9',
+      '${second.id}:9',
+    });
 
     service.toggleSource(first.id);
     expect(service.selectedSources, {second.id});

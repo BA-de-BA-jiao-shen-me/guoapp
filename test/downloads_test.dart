@@ -6,6 +6,7 @@ import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/playback_loader.dart';
 import 'package:duanju_app/player_screen.dart';
+import 'package:duanju_app/remote_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -121,7 +122,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final store = LocalStore(await SharedPreferences.getInstance());
     addTearDown(store.dispose);
-    return store;
+    return withAdultSources(store);
   }
 
   void size(WidgetTester tester, Size value) {
@@ -129,6 +130,27 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  Future<void> expandCollection(WidgetTester tester) async {
+    await tester.tap(find.text(FixtureRepository.free.title).first);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> episodeAction(
+    WidgetTester tester,
+    String id,
+    String label,
+  ) async {
+    final menu = find.descendant(
+      of: find.byKey(ValueKey('download-task-$id')),
+      matching: find.byTooltip('分集操作'),
+    );
+    await tester.ensureVisible(menu);
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(label).last);
+    await tester.pumpAndSettle();
   }
 
   Future<void> tick(WidgetTester tester) async {
@@ -302,6 +324,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    // 选集区默认收起，先展开再点分集。
+    await tester.tap(find.text('展开'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('episode-1')));
     await tester.pump();
     expect(find.text('这是一集 VIP 内容'), findsNothing);
@@ -325,23 +350,25 @@ void main() {
       ),
     );
     await tick(tester);
-    await tester.tap(find.byKey(const ValueKey('pause-1')));
-    await tick(tester);
+    // 下载页已改为“按剧合集 + 分集操作菜单”，先展开合集再从菜单操作。
+    await expandCollection(tester);
+    await episodeAction(tester, '1', '暂停');
     expect(repository.commands, ['pause:1']);
-    await tester.tap(find.byKey(const ValueKey('resume-1')));
-    await tick(tester);
+    await episodeAction(tester, '1', '继续 / 重试');
     expect(repository.commands.last, 'resume:1');
-    await tester.tap(find.text('已下载').first);
-    await tick(tester);
-    expect(find.byKey(const ValueKey('download-task-1')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('remove-2')));
+    await tester.tap(find.byTooltip('筛选下载合集'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('已下载'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('应用'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('download-task-1')), findsNothing);
+    await episodeAction(tester, '2', '删除视频');
     await tester.tap(find.text('保留'));
     await tester.pumpAndSettle();
     expect(repository.commands, isNot(contains('remove:2')));
-    await tester.tap(find.byKey(const ValueKey('remove-2')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除'));
+    await episodeAction(tester, '2', '删除视频');
+    await tester.tap(find.text('确认删除'));
     await tester.pumpAndSettle();
     expect(repository.commands.last, 'remove:2');
     expect(find.text('暂无符合条件的任务'), findsOneWidget);
@@ -384,8 +411,8 @@ void main() {
         ),
       );
       await tick(tester);
-      await tester.tap(find.byKey(const ValueKey('local-play-3')));
-      await tester.pumpAndSettle();
+      await expandCollection(tester);
+      await episodeAction(tester, '3', '本地播放');
       expect(find.text('offline player'), findsOneWidget);
       expect(repository.detailCalls, 0);
       expect(repository.onlineCalls, 0);
@@ -490,19 +517,31 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      focusRemote(tester, find.byKey(const ValueKey('tv-nav-4')));
+      focusRemote(tester, find.byKey(const ValueKey('tv-nav-5')));
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pumpAndSettle();
-      focusRemote(tester, find.byKey(const ValueKey('download-task-1')));
+      // 电视端下载页按剧合集展示：确认展开，下方依次是“合集操作”和各集。
+      focusRemote(
+        tester,
+        find
+            .ancestor(
+              of: find.text(FixtureRepository.free.title),
+              matching: find.byType(RemoteListTile),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
-      for (var i = 0; i < 12; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 14; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
         await tester.pumpAndSettle();
       }
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pumpAndSettle();
-      expect(find.text('测试短剧 · 第 13 集').last, findsOneWidget);
+      expect(find.text('第 13 集'), findsWidgets);
+      expect(find.text('继续 / 重试'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tick(tester);
       expect(repository.commands.last, 'resume:13');

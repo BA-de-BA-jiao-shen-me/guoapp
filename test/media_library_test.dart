@@ -148,7 +148,9 @@ void main() {
         fixtureProbe(rate: 48000),
       ]);
       expect(audioOnly.videoTranscodes, 0);
-      expect(audioOnly.audioTranscodes, 1);
+      // AAC 目标下只要音轨不一致，全部音轨统一为 AAC LC（canonicalAac），视频仍不动。
+      expect(audioOnly.canonicalAac, isTrue);
+      expect(audioOnly.audioTranscodes, 3);
       final identical = MergePlan.create([fixtureProbe(), fixtureProbe()]);
       expect(identical.videoTranscodes, 0);
       expect(identical.audioTranscodes, 0);
@@ -163,7 +165,9 @@ void main() {
     ]);
     expect(plan.audio, isNotNull);
     expect(plan.videoTranscodes, 0);
-    expect(plan.audioTranscodes, 2);
+    // 缺音轨时同样统一为 AAC LC：两集补静音，已有音轨的一集也重编码以保证参数一致。
+    expect(plan.canonicalAac, isTrue);
+    expect(plan.audioTranscodes, 3);
   });
 
   test(
@@ -233,7 +237,8 @@ void main() {
         await expectLater(
           library.merge(jobs),
           throwsA(
-            predicate((Object error) => error.toString().contains('已取消')),
+            // 取消与其他中止原因共用“本地媒体处理已停止”提示，状态栏另显示“已取消”。
+            predicate((Object error) => error.toString().contains('已停止')),
           ),
         );
         expect(executor.commands, isEmpty);

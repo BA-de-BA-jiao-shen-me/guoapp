@@ -790,14 +790,14 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PlaybackLaunchScreen(
-          drama: drama,
-          repository: widget.repository,
-          store: widget.store,
-          searchKeyword: _onlineSearch ? _submittedQuery : '',
-        ),
+    // 普通点剧在当前页读取详情后直接进入播放器（0.2.48 起的设计），不再推“正在进入播放”中间页。
+    unawaited(
+      openPlaybackDirectly(
+        context,
+        drama: drama,
+        repository: widget.repository,
+        store: widget.store,
+        searchKeyword: _onlineSearch ? _submittedQuery : '',
       ),
     );
   }

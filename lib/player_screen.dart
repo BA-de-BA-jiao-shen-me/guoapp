@@ -68,6 +68,14 @@ class PlayerScreen extends StatefulWidget {
   final String searchKeyword;
   @visibleForTesting
   final Player Function()? playerFactory;
+
+  /// 测试用：没有传 [playerFactory] 时使用的播放器工厂（测试环境没有 libmpv）。
+  @visibleForTesting
+  static Player Function()? debugPlayerFactory;
+
+  /// 测试用：没有传 [videoBuilder] 时使用的画面构建器（测试环境没有视频纹理）。
+  @visibleForTesting
+  static Widget Function(Widget controls)? debugVideoBuilder;
   @visibleForTesting
   final Widget Function(Widget controls)? videoBuilder;
   @override
@@ -76,6 +84,9 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen>
     with WidgetsBindingObserver {
+  Widget Function(Widget controls)? get _videoBuilder =>
+      widget.videoBuilder ?? PlayerScreen.debugVideoBuilder;
+
   late final Player _player;
   VideoController? _video;
   bool _surfaceOutput = false;
@@ -218,7 +229,7 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _fallbackToTextureOutput() {
     if (_closed || _surfaceFailed || _surfaceOutput == false) return;
-    if (widget.videoBuilder != null) return;
+    if (_videoBuilder != null) return;
     _surfaceFailed = true;
     _surfaceOutput = false;
     _video = VideoController(
@@ -251,14 +262,15 @@ class _PlayerScreenState extends State<PlayerScreen>
     widget.store.addListener(_accessChanged);
     _player =
         widget.playerFactory?.call() ??
+        PlayerScreen.debugPlayerFactory?.call() ??
         Player(
           configuration: PlayerConfiguration(
             bufferSize: 32 * 1024 * 1024,
             logLevel: Platform.isWindows ? MPVLogLevel.v : MPVLogLevel.error,
           ),
         );
-    _surfaceOutput = androidSurfaceViewSupported && widget.videoBuilder == null;
-    _video = widget.videoBuilder == null && !_surfaceOutput
+    _surfaceOutput = androidSurfaceViewSupported && _videoBuilder == null;
+    _video = _videoBuilder == null && !_surfaceOutput
         ? VideoController(
             _player,
             configuration: VideoControllerConfiguration(
@@ -1879,8 +1891,8 @@ class _PlayerScreenState extends State<PlayerScreen>
             key: _videoPaneKey,
             fit: StackFit.expand,
             children: [
-              if (widget.videoBuilder != null)
-                widget.videoBuilder!(layeredControls)
+              if (_videoBuilder != null)
+                _videoBuilder!(layeredControls)
               else if (_surfaceOutput) ...[
                 const ColoredBox(color: Colors.black),
                 _videoSurfaceHost(settled),

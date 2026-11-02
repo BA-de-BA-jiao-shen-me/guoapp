@@ -1,3 +1,4 @@
+import 'package:duanju_app/app_build.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/sources_screen.dart';
@@ -11,6 +12,11 @@ Future<LocalStore> mount(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({});
   final store = LocalStore(await SharedPreferences.getInstance());
   addTearDown(store.dispose);
+  if (allSourcesEnabled) {
+    // 黄果系列是成人站源：只有全站源版打开完整模式并关闭绿色模式后才出现。
+    await store.setFullMode(true);
+    await store.setGreenMode(false);
+  }
   tester.view.physicalSize = const Size(420, 1400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -40,17 +46,13 @@ void main() {
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      expect(
-        card,
-        findsOneWidget,
-        reason: '$id 应与其他站源一样独立成卡片',
-      );
+      expect(card, findsOneWidget, reason: '$id 应与其他站源一样独立成卡片');
     }
     expect(find.text('黄果'), findsNothing, reason: '不再使用黄果折叠分组');
     expect(find.byType(ExpansionTile), findsNothing);
     expect(store.sources.length, SourceSite.values.length);
     expect(tester.takeException(), isNull);
-  });
+  }, skip: !allSourcesEnabled);
 
   testWidgets('tapping a 黄果 card and its actions keeps the app alive', (
     tester,
@@ -77,5 +79,5 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(tester.takeException(), isNull);
-  });
+  }, skip: !allSourcesEnabled);
 }

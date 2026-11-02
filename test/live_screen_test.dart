@@ -11,10 +11,8 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 
 /// 合成直播源：不联网，只验证界面与收藏交互。
 class _FakeRepository extends LiveRepository {
-  _FakeRepository({this.extraGroups = 0, this.failGroups = const {}});
-
-  final int extraGroups;
-  final Set<String> failGroups;
+  final int extraGroups = 0;
+  final Set<String> failGroups = const {};
   final List<String> sources = [];
   int channelCalls = 0;
 
