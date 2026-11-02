@@ -1,4 +1,6 @@
+import 'package:duanju_app/app_build.dart';
 import 'package:duanju_app/core_bridge.dart';
+import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
 
 class FixtureRepository extends AppRepository {
@@ -86,4 +88,14 @@ class FixtureRepository extends AppRepository {
   Future<void> cancelPlayback() async {}
   @override
   Future<void> release(String session) async {}
+}
+
+/// 全站源版里黄果、黄豆、帝果等成人站源只有在完整模式且关闭绿色模式后才可用；
+/// 依赖这些站源的用例在创建本地存储后调用此方法，绿色版下不做任何事。
+Future<LocalStore> withAdultSources(LocalStore store) async {
+  if (allSourcesEnabled) {
+    await store.setFullMode(true);
+    await store.setGreenMode(false);
+  }
+  return store;
 }

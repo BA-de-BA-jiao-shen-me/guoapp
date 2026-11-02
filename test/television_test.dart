@@ -1,7 +1,9 @@
 import 'package:duanju_app/app_layout.dart';
+import 'package:duanju_app/detail_screen.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/main.dart';
 import 'package:duanju_app/models.dart';
+import 'package:duanju_app/player_screen.dart';
 import 'package:duanju_app/remote_widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -118,7 +120,9 @@ void main() {
           DuanjuApp(repository: repository, store: store, television: true),
         );
         await tester.pumpAndSettle();
-        if (SourceSite.values.length > 1) {
+        // 首页切换的是站源分组（SourceGroup），同组多个站源合并显示，按分组顺序取第二项。
+        final groups = SourceGroup.fromSources(store.sources);
+        if (groups.length > 1) {
           final switcher = find.byKey(const ValueKey('source-switch'));
           final title = find
               .descendant(of: switcher, matching: find.byType(Text))
@@ -126,18 +130,41 @@ void main() {
           Focus.of(tester.element(title)).requestFocus();
           await tester.pumpAndSettle();
           await press(tester, LogicalKeyboardKey.select);
+          // 菜单首项是聚合的“全部”，其后才是各分组，因此下移三次落到第二个分组。
+          await press(tester, LogicalKeyboardKey.arrowDown);
           await press(tester, LogicalKeyboardKey.arrowDown);
           await press(tester, LogicalKeyboardKey.arrowDown);
           await press(tester, LogicalKeyboardKey.select);
         }
         expect(
           repository.requests.last,
-          SourceSite.values.length > 1 ? SourceSite.values[1].id : 'hongguo',
+          groups.length > 1 ? groups[1].sources.first.id : 'hongguo',
         );
         focusRemote(tester, find.byKey(ValueKey(FixtureRepository.free.id)));
         await tester.pumpAndSettle();
         await press(tester, LogicalKeyboardKey.select);
+        // 0.2.48 起点剧在当前页读取详情后直接进入播放，不再先进详情页；
+        // 本仓库的剧集全是 VIP，所以先弹 VIP 确认，返回后焦点回到卡片。
         expect(repository.detailCalls, 1);
+        expect(find.text('这是一集 VIP 内容'), findsOneWidget);
+        await press(tester, LogicalKeyboardKey.goBack);
+        expect(find.text('这是一集 VIP 内容'), findsNothing);
+        expect(find.byType(PlayerScreen), findsNothing);
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'remote-${FixtureRepository.free.id}',
+        );
+        // 详情页的 VIP 确认与返回焦点单独在详情页上验证。
+        await tester.pumpWidget(
+          televisionHost(
+            child: DetailScreen(
+              drama: FixtureRepository.free,
+              repository: repository,
+              store: store,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
         expect(find.byKey(const ValueKey('start-play')), findsOneWidget);
         focusRemote(tester, find.byKey(const ValueKey('episode-1')));
         await tester.pumpAndSettle();
@@ -146,11 +173,6 @@ void main() {
         await press(tester, LogicalKeyboardKey.goBack);
         expect(find.text('这是一集 VIP 内容'), findsNothing);
         expect(FocusManager.instance.primaryFocus?.debugLabel, 'remote-1');
-        await press(tester, LogicalKeyboardKey.escape);
-        expect(
-          FocusManager.instance.primaryFocus?.debugLabel,
-          'remote-${FixtureRepository.free.id}',
-        );
         expect(tester.takeException(), isNull);
       },
     );

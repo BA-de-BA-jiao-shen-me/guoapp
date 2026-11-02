@@ -351,8 +351,8 @@ void main() {
       containsAll(<String>['都市', '古装']),
     );
 
-    service.toggleSource('hongguo');
-    expect(service.selectedSources, {'hongguo'});
+    // 新用户默认只选红果（recommendationDefaultSource）。
+    expect(service.selectedSources, {recommendationDefaultSource});
     expect(service.items, hasLength(2));
 
     service.toggleSource(recommendationAllSources);
@@ -449,7 +449,10 @@ void main() {
 
   test('站源可多选，全部与具体站源互斥', () async {
     final service = await attach();
-    final available = SourceSite.values.toList();
+    // 只取当前用户可见的站源：全站源版里成人站源默认被绿色模式隐藏。
+    final available = SourceSite.values
+        .where((site) => store.allowsSource(site.id))
+        .toList();
     final used = available.take(2).toList();
     for (final site in used) {
       final other = NostrIdentity.generate();
@@ -478,6 +481,9 @@ void main() {
       );
     }
     await Future<void>.delayed(const Duration(milliseconds: 260));
+    // 默认只选红果，先切到「全部」再验证多选。
+    expect(service.selectedSources, {recommendationDefaultSource});
+    service.toggleSource(recommendationAllSources);
     expect(service.items, hasLength(used.length));
 
     final first = used.first;

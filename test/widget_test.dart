@@ -1,5 +1,9 @@
 import 'package:duanju_app/local_store.dart';
+import 'package:duanju_app/detail_screen.dart';
+import 'package:duanju_app/follow_state.dart';
 import 'package:duanju_app/main.dart';
+import 'package:duanju_app/player_screen.dart';
+import 'package:duanju_app/remote_widgets.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/app_build.dart';
 import 'package:flutter/material.dart';
@@ -11,7 +15,7 @@ import 'fixtures.dart';
 void main() {
   Future<LocalStore> store() async {
     SharedPreferences.setMockInitialValues({});
-    return LocalStore(await SharedPreferences.getInstance());
+    return withAdultSources(LocalStore(await SharedPreferences.getInstance()));
   }
 
   for (final size in [const Size(390, 844), const Size(1280, 800)]) {
@@ -31,7 +35,7 @@ void main() {
       if (allSourcesEnabled) {
         await tester.tap(find.byKey(const ValueKey('source-switch')));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('黄豆'));
+        await tester.tap(find.text('豆果').last);
         await tester.pumpAndSettle();
         expect(find.text('会员测试剧'), findsNothing);
         expect(find.byTooltip('VIP：隐藏'), findsOneWidget);
@@ -45,11 +49,31 @@ void main() {
         expect(find.text('黄豆'), findsNothing);
       }
       expect(find.text('会员测试剧'), findsNothing);
+      // 普通点剧读取最新详情后直接进入播放器；选集与追剧状态在详情页（下载/兜底入口）里验证。
       await tester.tap(find.text('测试短剧'));
       await tester.pumpAndSettle();
       expect(repository.detailCalls, 1);
+      expect(find.byType(PlayerScreen), findsOneWidget);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DetailScreen(
+            drama: FixtureRepository.free,
+            repository: repository,
+            store: local,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // 详情页选集默认折叠，先展开。
+      if (find.text('展开').evaluate().isNotEmpty) {
+        await tester.tap(find.text('展开'));
+        await tester.pumpAndSettle();
+      }
       expect(find.byKey(const ValueKey('episode-2')), findsOneWidget);
-      await tester.tap(find.byTooltip('加入追剧'));
+      // 追剧改为状态菜单：点开后选第一个状态。
+      await tester.tap(find.text('加入追剧'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(FollowStatus.values.first.label).last);
       await tester.pumpAndSettle();
       expect(local.isFavorite(FixtureRepository.free.id), isTrue);
       for (final episode in [1, 2]) {
@@ -63,15 +87,12 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('继续第 $episode 集'), findsOneWidget);
+        expect(find.text('继续播放 · 第 $episode 集'), findsOneWidget);
         for (final number in [1, 2]) {
-          final button = tester.widget<OutlinedButton>(
+          final button = tester.widget<RemoteEpisodeButton>(
             find.byKey(ValueKey('episode-$number')),
           );
-          expect(
-            button.style?.backgroundColor?.resolve({}),
-            number == episode ? isNotNull : isNull,
-          );
+          expect(button.current, number == episode);
         }
       }
       await local.clearHistory();
