@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph, ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -749,7 +750,8 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
   late final StreamSubscription<Duration> _positionSub;
   late final StreamSubscription<bool> _playingSub;
   late final StreamSubscription<bool> _completedSub;
-  final _lineKey = GlobalKey();
+  final _textScroll = ScrollController();
+  List<GlobalKey> _lineKeys = const [];
   late int _index = widget.chapters.isEmpty
       ? 0
       : widget.index.clamp(0, widget.chapters.length - 1).toInt();
@@ -773,7 +775,10 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
   bool _handledEnd = false;
   bool _heardProgress = false;
   bool _asleep = false;
-  bool _reading = false;
+  bool _reading = true;
+  bool _following = true;
+  bool _timed = false;
+  Object? _timedText;
   bool _textLoading = false;
   int _line = -1;
   int _shownLine = -1;
@@ -818,6 +823,7 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
         ),
       );
     }
+    _textScroll.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -856,7 +862,8 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
       _position = seconds;
       if (duration > 0) _duration = duration;
     });
-    if (_texts.isNotEmpty && (_lines.isEmpty || _lines.last.end != _duration)) {
+    if ((_texts.isNotEmpty || _timedText != null) &&
+        (_lines.isEmpty || _lines.last.end != _duration)) {
       _refreshLines();
     }
   }
@@ -875,18 +882,26 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
   }
 
   void _refreshLines() {
-    _lines = paceAudiobookLines(_texts, _duration);
+    final timed = _timedText == null
+        ? const <AudiobookLine>[]
+        : audiobookTimedLines(_timedText, _duration);
+    _lines = timed.isNotEmpty ? timed : paceAudiobookLines(_texts, _duration);
+    if (_lineKeys.length != _lines.length) {
+      _lineKeys = [for (var i = 0; i < _lines.length; i++) GlobalKey()];
+    }
     _line = audiobookLineAt(_lines, _position);
   }
 
-  void _followLine(double seconds) {
+  void _followLine(double seconds, {bool force = false}) {
     final next = audiobookLineAt(_lines, seconds);
-    if (next == _line) return;
+    if (next == _line && !force) return;
     _line = next;
-    if (!_reading || next < 0 || next == _shownLine) return;
+    if (!_reading || !_following || next < 0) return;
+    if (next == _shownLine && !force) return;
     _shownLine = next;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _lineKey.currentContext;
+      if (next >= _lineKeys.length) return;
+      final target = _lineKeys[next].currentContext;
       if (target == null || !mounted) return;
       Scrollable.ensureVisible(
         target,
@@ -903,20 +918,36 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
       _textLoading = true;
       _textError = null;
       _texts = const [];
+      _timedText = null;
+      _timed = false;
       _lines = const [];
       _line = -1;
       _shownLine = -1;
     });
     try {
-      final texts = await widget.api.chapterText(itemId);
+      // 先取带逐句时间轴的听书正文；失败再退回网页正文，按字数比例对齐。
+      Object? timedText;
+      try {
+        timedText = await widget.repository.audiobookText(itemId);
+      } catch (_) {
+        timedText = null;
+      }
+      if (!mounted || generation != _generation) return;
+      var texts = const <String>[];
+      if (audiobookTimedLines(timedText, 1).isEmpty) {
+        timedText = null;
+        texts = await widget.api.chapterText(itemId);
+      }
       if (!mounted || generation != _generation) return;
       setState(() {
+        _timedText = timedText;
+        _timed = timedText is Map && timedText['timed'] == true;
         _texts = texts;
         _textLoading = false;
-        _textError = texts.isEmpty ? '这一章暂时没有原文' : null;
+        _textError = timedText == null && texts.isEmpty ? '这一章暂时没有原文' : null;
+        _refreshLines();
       });
-      _refreshLines();
-      _followLine(_position);
+      _followLine(_position, force: true);
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -944,6 +975,7 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
         _error = null;
         _position = _resumeFloor;
         _texts = const [];
+        _timedText = null;
         _lines = const [];
         _line = -1;
         _textError = null;
@@ -1057,12 +1089,50 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
     });
   }
 
-  Future<void> _jumpLine(AudiobookLine line) async {
+  Future<void> _jumpLine(AudiobookLine line, [double? at]) async {
+    final target = at ?? line.start;
     _caughtUp = true;
     _handledEnd = false;
-    await _player.seek(Duration(milliseconds: (line.start * 1000).round()));
-    if (mounted) setState(() => _position = line.start);
+    _following = true;
+    await _player.seek(Duration(milliseconds: (target * 1000).round()));
+    if (mounted) setState(() => _position = target);
+    _followLine(target, force: true);
     await _persist();
+  }
+
+  /// 双击某段：按双击处的字符落在哪一句，跳到那一句的时间。
+  void _doubleTapLine(int index, Offset? local) {
+    if (index < 0 || index >= _lines.length) return;
+    final line = _lines[index];
+    var at = line.start;
+    final render = _lineKeys[index].currentContext?.findRenderObject();
+    if (local != null && render is RenderBox) {
+      RenderParagraph? paragraph;
+      void visit(RenderObject child) {
+        if (paragraph != null) return;
+        if (child is RenderParagraph) {
+          paragraph = child;
+          return;
+        }
+        child.visitChildren(visit);
+      }
+
+      render.visitChildren(visit);
+      final found = paragraph;
+      if (found != null) {
+        final global = render.localToGlobal(local);
+        final offset = found
+            .getPositionForOffset(found.globalToLocal(global))
+            .offset;
+        at = audiobookSeekForOffset(line, offset);
+      }
+    }
+    unawaited(_jumpLine(line, at));
+  }
+
+  void _resumeFollow() {
+    setState(() => _following = true);
+    _followLine(_position, force: true);
   }
 
   Future<void> _addBookmark() async {
@@ -1317,50 +1387,166 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
                   icon: Icons.menu_book_rounded,
                   onRetry: () => unawaited(_loadText()),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                  itemCount: _lines.length,
-                  itemBuilder: (context, index) {
-                    final line = _lines[index];
-                    final current = index == _line;
-                    return Padding(
-                      key: current ? _lineKey : ValueKey('line-$index'),
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Material(
-                        color: current
-                            ? theme.colorScheme.primaryContainer
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: () => unawaited(_jumpLine(line)),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            child: Text(
-                              line.text,
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                height: 1.65,
-                                fontWeight: current ? FontWeight.w600 : null,
-                              ),
-                            ),
-                          ),
+              : Stack(
+                  children: [
+                    NotificationListener<UserScrollNotification>(
+                      onNotification: (notification) {
+                        if (notification.direction != ScrollDirection.idle &&
+                            _following) {
+                          setState(() => _following = false);
+                        }
+                        return false;
+                      },
+                      child: SingleChildScrollView(
+                        controller: _textScroll,
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 72),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var index = 0; index < _lines.length; index++)
+                              _manuscriptLine(theme, index),
+                          ],
                         ),
                       ),
-                    );
-                  },
+                    ),
+                    if (!_following)
+                      Positioned(
+                        right: 16,
+                        bottom: 12,
+                        child: FloatingActionButton.extended(
+                          key: const ValueKey('audiobook-follow'),
+                          heroTag: null,
+                          onPressed: _resumeFollow,
+                          icon: const Icon(Icons.my_location_rounded),
+                          label: const Text('跟随朗读'),
+                        ),
+                      ),
+                  ],
                 ),
         ),
+        _miniControls(theme),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
           child: Text(
-            '${chapter.title} · 点一段就跳到这里',
+            _timed
+                ? '${chapter.title} · 双击句子跳到这里 · 逐句时间轴'
+                : '${chapter.title} · 双击段落跳到这里 · 按字数估算位置',
             style: theme.textTheme.bodySmall,
           ),
         ),
       ],
+    );
+  }
+
+  Widget _manuscriptLine(ThemeData theme, int index) {
+    final line = _lines[index];
+    final current = index == _line;
+    final style = theme.textTheme.bodyLarge?.copyWith(height: 1.65);
+    final segment = current ? audiobookSegmentAt(line, _position) : -1;
+    Offset? tapAt;
+    return Padding(
+      key: _lineKeys[index],
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: current
+            ? theme.colorScheme.primaryContainer
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: GestureDetector(
+          key: ValueKey('audiobook-line-$index'),
+          behavior: HitTestBehavior.opaque,
+          onDoubleTapDown: (details) => tapAt = details.localPosition,
+          onDoubleTap: () => _doubleTapLine(index, tapAt),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: line.segments.isEmpty
+                ? Text(
+                    line.text,
+                    style: style?.copyWith(
+                      fontWeight: current ? FontWeight.w600 : null,
+                    ),
+                  )
+                : Text.rich(
+                    TextSpan(
+                      children: [
+                        for (var i = 0; i < line.segments.length; i++)
+                          TextSpan(
+                            text: line.segments[i].text,
+                            style: i == segment
+                                ? TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: theme.colorScheme.primary,
+                                  )
+                                : null,
+                          ),
+                      ],
+                    ),
+                    style: style,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _miniControls(ThemeData theme) {
+    final max = _duration > 0 ? _duration : 1.0;
+    final value = (_dragging ? _drag : _position).clamp(0, max).toDouble();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '后退 15 秒',
+            onPressed: () => _seekBy(-15),
+            icon: const Icon(CupertinoIcons.gobackward_15),
+          ),
+          IconButton(
+            key: const ValueKey('audiobook-mini-play'),
+            tooltip: _playing ? '暂停' : '播放',
+            onPressed: () => _player.playOrPause(),
+            icon: Icon(
+              _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+          ),
+          IconButton(
+            tooltip: '前进 15 秒',
+            onPressed: () => _seekBy(15),
+            icon: const Icon(CupertinoIcons.goforward_15),
+          ),
+          Expanded(
+            child: Slider(
+              value: value,
+              max: max,
+              onChanged: _duration > 1
+                  ? (next) => setState(() {
+                      _dragging = true;
+                      _drag = next;
+                    })
+                  : null,
+              onChangeEnd: _duration > 1
+                  ? (next) async {
+                      setState(() {
+                        _dragging = false;
+                        _position = next;
+                        _following = true;
+                      });
+                      _caughtUp = true;
+                      await _player.seek(
+                        Duration(milliseconds: (next * 1000).round()),
+                      );
+                      _followLine(next, force: true);
+                      await _persist();
+                    }
+                  : null,
+            ),
+          ),
+          Text(
+            '${formatAudiobookClock(value)} / ${formatAudiobookClock(_duration)}',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
     );
   }
 }

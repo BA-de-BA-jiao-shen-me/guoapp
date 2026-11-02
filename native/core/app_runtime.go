@@ -439,6 +439,19 @@ func nativeDispatch(input nativeInput) (any, error) {
 	case "suggestions":
 		items, err := engine.suggestions(ctx, input.Query)
 		return map[string]any{"items": items}, err
+	case "audiobookText":
+		paragraphs, err := engine.downloader.fetchAudiobookText(ctx, input.Category)
+		if err != nil {
+			return nil, err
+		}
+		timed := false
+		for _, paragraph := range paragraphs {
+			if paragraph.Start >= 0 {
+				timed = true
+				break
+			}
+		}
+		return map[string]any{"paragraphs": paragraphs, "timed": timed}, nil
 	case "audiobookMedia":
 		media, err := engine.downloader.resolveNovelfmAudio(ctx, input.Query, input.Category)
 		if err != nil {
