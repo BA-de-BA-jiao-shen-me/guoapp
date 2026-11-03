@@ -40,25 +40,17 @@ type hongguoPlaybackDevice struct {
 	CDID     string
 }
 
+// hongguoPlaybackDevice 每次取流都注册一台新的播放设备，不复用。
+//
+// 实测（2026-11-03，见 PR #4）：同一台注册设备只有第一次带签名取流能拿到 video_model，
+// 之后无论换哪一集、换哪个接入域名、间隔多久，上游都回 HTTP 200 + 空正文（响应带 Tt_stable:1）。
+// 6 台新设备各取一次全部成功，第二轮同样 6 台只剩约一半，第三轮全部失败。
+// 旧代码把第一次注册的设备缓存到进程结束，所以只有第一次打开的那一集能播。
 func (downloader *Downloader) hongguoPlaybackDevice(ctx context.Context) (hongguoPlaybackDevice, error) {
-	client := downloader.hongguoClient()
-	client.mu.Lock()
-	cached := client.playbackDevice
-	client.mu.Unlock()
-	if cached.DeviceID != "" && cached.Install != "" {
-		return cached, nil
-	}
 	device, err := downloader.registerHongguoPlaybackDevice(ctx)
 	if err != nil {
 		return hongguoPlaybackDevice{}, fmt.Errorf("%w：%v", errHongguoDeviceRegister, err)
 	}
-	client.mu.Lock()
-	if client.playbackDevice.DeviceID == "" {
-		client.playbackDevice = device
-	} else {
-		device = client.playbackDevice
-	}
-	client.mu.Unlock()
 	return device, nil
 }
 
@@ -191,16 +183,40 @@ func hongguoRegisterBody(now int64, cdid string) ([]byte, error) {
 	return append(append([]byte{0x74, 0x63, 0x05, 0x10, 0x00, 0x00}, random...), encrypted...), nil
 }
 
+// hongguoRegisteredMediaAttempts 是一次取流最多换几台新设备。偶尔新设备的第一次请求也会回空，
+// 换一台重试即可。
+const hongguoRegisteredMediaAttempts = 3
+
+// resolveHongguoRegisteredMedia 每次取流用一台新注册的设备；失败再换新设备重试。
 func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
-	device, err := downloader.hongguoPlaybackDevice(ctx)
-	if err != nil {
-		return providerMedia{}, err
+	var lastErr error
+	for attempt := 0; attempt < hongguoRegisteredMediaAttempts; attempt++ {
+		device, err := downloader.hongguoPlaybackDevice(ctx)
+		if err != nil {
+			if lastErr == nil {
+				return providerMedia{}, err
+			}
+			break
+		}
+		media, err := downloader.resolveHongguoRegisteredMediaWith(ctx, device, videoID)
+		if err == nil || ctx.Err() != nil {
+			return media, err
+		}
+		lastErr = err
 	}
+	return providerMedia{}, lastErr
+}
+
+func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Context, device hongguoPlaybackDevice, videoID string) (providerMedia, error) {
 	var lastErr error
 	for _, contentType := range []string{"1004", "1"} {
 		result, err := downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, contentType)
 		if err != nil && ctx.Err() == nil {
+			signedErr := err
 			result, err = downloader.hongguoUnsignedMedia(ctx, device, videoID, contentType)
+			if err != nil {
+				err = fmt.Errorf("%v；无签名重试：%v", signedErr, err)
+			}
 		}
 		if err != nil {
 			lastErr = err

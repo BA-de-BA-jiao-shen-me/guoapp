@@ -198,4 +198,40 @@ void main() {
     await controller.play(1);
     expect(controller.route, 0, reason: '换台后从第一条线路重新起播');
   });
+
+  test('翻页追加频道不重新起播，不会切回第一间直播间', () async {
+    final repository = LiveRepository(http: _FakeHttp());
+    addTearDown(repository.dispose);
+    final controller = LivePlaybackController(repository: repository);
+    addTearDown(controller.dispose);
+
+    LiveChannel room(String key) => LiveChannel(
+      key: key,
+      name: key,
+      urls: ['https://p1.example/$key'],
+      number: key,
+      headers: const {},
+      logo: '',
+      group: '主播',
+      source: 'fixture-list',
+    );
+    await controller.load(_listSource, [
+      room('a'),
+      room('b'),
+      room('c'),
+    ], autoplay: false);
+    await controller.play(2);
+    expect(controller.channel?.key, 'c');
+
+    controller.extend([room('c'), room('d'), room('e')]);
+    expect(controller.index, 2, reason: '追加之后仍停在用户选的直播间');
+    expect(controller.channel?.key, 'c');
+    expect(controller.channels.map((item) => item.key), [
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+    ]);
+  });
 }

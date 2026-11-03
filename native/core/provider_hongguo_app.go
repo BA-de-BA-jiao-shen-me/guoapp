@@ -55,9 +55,8 @@ type hongguoAppClient struct {
 	searchSeasons  map[string]*hongguoSearchSeasonCursor
 	suggestions    map[string]hongguoSuggestionEntry
 	suggestPending map[string]*hongguoSuggestionCall
-	danmaku         map[string]hongguoDanmakuCacheEntry
-	danmakuPending  map[string]*hongguoDanmakuCall
-	playbackDevice  hongguoPlaybackDevice
+	danmaku        map[string]hongguoDanmakuCacheEntry
+	danmakuPending map[string]*hongguoDanmakuCall
 }
 
 func (downloader *Downloader) hongguoClient() *hongguoAppClient {

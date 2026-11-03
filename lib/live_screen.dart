@@ -225,13 +225,19 @@ class _LiveScreenState extends State<LiveScreen> {
         _loading = false;
         _more = false;
         _hasMore = _source!.paginated && channels.length >= 24;
-        _applyChannels(
-          append && !_playback.ready
-              ? [..._channels, ...channels]
-              : append
-              ? [..._playback.channels, ...channels]
-              : channels,
-        );
+        if (append) {
+          // 翻页只追加列表，绝不能重新 load：load 会从第一条重新起播，
+          // 用户刚选的直播间几秒后（下一页返回时）就被切回最初那一间。
+          final shared = liveSameChannelList(_playback.channels, _channels);
+          _channels = [..._channels, ...channels];
+          if (shared && _playback.source?.id == source.id) {
+            _playback.extend(channels);
+          } else if (!_playback.ready) {
+            _applyChannels(_channels);
+          }
+        } else {
+          _applyChannels(channels);
+        }
       });
     } catch (error) {
       if (!mounted || token != _generation) return;
@@ -817,4 +823,14 @@ class _LiveScreenState extends State<LiveScreen> {
       ),
     );
   }
+}
+
+/// 播放器里的频道表是否就是当前列表（同一批频道、同样顺序开头）。
+bool liveSameChannelList(List<LiveChannel> playing, List<LiveChannel> shown) {
+  if (playing.isEmpty || shown.isEmpty) return false;
+  final count = playing.length < shown.length ? playing.length : shown.length;
+  for (var i = 0; i < count; i++) {
+    if (playing[i].key != shown[i].key) return false;
+  }
+  return true;
 }

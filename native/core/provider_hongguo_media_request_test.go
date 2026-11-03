@@ -7,9 +7,12 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 上游 2026-11 起对不带签名的注册设备取流回空正文：必须先用注册设备号带六个签名头请求。
@@ -148,6 +151,56 @@ func TestHongguoPlaybackDeviceIDStaysSixteenDigits(t *testing.T) {
 		id, err := newHongguoPlaybackDeviceID()
 		if err != nil || len(id) != 16 || strings.Trim(id, "0123456789") != "" {
 			t.Fatal(id, err)
+		}
+	}
+}
+
+// 模拟实测到的上游行为：每台注册设备只有第一次取流有内容，之后回空正文。
+// 连续切换多集都必须能取到流（每集换一台新设备）。
+func TestHongguoRegisteredMediaUsesFreshDevicePerEpisode(t *testing.T) {
+	videos := []string{"7694655440692448281", "7694655440692448282", "7694655440692448283", "7694655440692448284"}
+	registers := 0
+	used := map[string]bool{}
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			registers++
+			id := fmt.Sprintf("71234567890%05d", registers)
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"`+id+`","install_id_str":"`+id+`"}`), nil
+		}
+		device := request.URL.Query().Get("device_id")
+		if used[device] {
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		used[device] = true
+		raw, _ := io.ReadAll(request.Body)
+		video := ""
+		for _, candidate := range videos {
+			if strings.Contains(string(raw), candidate) {
+				video = candidate
+			}
+		}
+		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+video+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/`+video+`.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
+	})
+	for _, video := range videos {
+		media, err := d.resolveHongguoRegisteredMedia(context.Background(), video)
+		if err != nil || media.URL != "https://cdn.example/"+video+".mp4" {
+			t.Fatalf("%s: %v %+v", video, err, media)
+		}
+	}
+	if registers != len(videos) {
+		t.Fatalf("registers %d", registers)
+	}
+}
+
+// 实测只有分支 2 的签名能被上游接受，签名时必须调整 _rticket 落到分支 2。
+func TestHongguoPlaybackSignatureAlwaysUsesAcceptedBranch(t *testing.T) {
+	body := []byte(`{"mixed_video_id_map":{"1004":["7694655440692448281"]}}`)
+	for i := 0; i < 50; i++ {
+		request, _ := http.NewRequest(http.MethodPost, "https://example.test"+hongguoMediaPath+"?aid=8662&device_id=1&_rticket="+fmt.Sprint(i), nil)
+		now := time.Unix(1793712000+int64(i), 0)
+		signHongguoPlaybackRequest(request, body, now)
+		if got := hongguoSignBranch(request.URL.RawQuery, body, uint32(now.Unix())); got != hongguoSignValidBranch {
+			t.Fatalf("branch %d for %s", got, request.URL.RawQuery)
 		}
 	}
 }
