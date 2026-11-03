@@ -16,10 +16,10 @@ func signHongguoPlaybackRequest(request *http.Request, body []byte, now time.Tim
 	khronos := uint32(now.Unix())
 	query := request.URL.Query()
 	ticket := now.UnixMilli()
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := 0; attempt < 64; attempt++ {
 		query.Set("_rticket", strconv.FormatInt(ticket+int64(attempt), 10))
 		request.URL.RawQuery = query.Encode()
-		if hongguoSignBranch(request.URL.RawQuery, body, khronos) != 1 {
+		if hongguoSignBranch(request.URL.RawQuery, body, khronos) == hongguoSignValidBranch {
 			break
 		}
 	}
@@ -27,6 +27,11 @@ func signHongguoPlaybackRequest(request *http.Request, body []byte, now time.Tim
 		request.Header.Set(key, value)
 	}
 }
+
+// hongguoSignValidBranch 是本地实现的 X-Medusa/X-Gorgon 唯一能被上游接受的分支。
+// 实测（2026-11-03）：分支 0 与分支 1 的签名一律回 HTTP 200 空正文，只有分支 2 返回 video_model。
+// 分支由 query/body/时间戳决定，换一个 _rticket 就会变，所以签名前调整 _rticket 直到落在分支 2。
+const hongguoSignValidBranch = 2
 
 func hongguoPureSign(rawURL string, body []byte, khronos uint32) map[string]string {
 	query := hongguoSignQuery(rawURL)
