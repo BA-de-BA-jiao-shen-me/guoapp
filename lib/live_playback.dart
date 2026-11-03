@@ -149,7 +149,12 @@ class LivePlaybackController extends ChangeNotifier {
     final channel = _channels[index.clamp(0, _channels.length - 1)];
     final source = _source;
     if (source == null) return;
-    if (!reconnect) _retries = 0;
+    if (!reconnect) {
+      _retries = 0;
+      // 换台时丢掉上一台残留的重连 / 卡死计时，避免它们稍后打断新的直播间。
+      _reconnect?.cancel();
+      _stall?.cancel();
+    }
     if (!reconnect && index != _index) _route = 0;
     final token = ++_generation;
     _index = index;
@@ -193,6 +198,19 @@ class LivePlaybackController extends ChangeNotifier {
       );
     }
     return repository.playback(source, channel);
+  }
+
+  /// 翻页追加频道：只扩充频道表，不打断当前正在播放的直播间。
+  void extend(List<LiveChannel> more) {
+    if (_disposed || more.isEmpty) return;
+    final known = {for (final channel in _channels) channel.key};
+    final added = [
+      for (final channel in more)
+        if (known.add(channel.key)) channel,
+    ];
+    if (added.isEmpty) return;
+    _channels = [..._channels, ...added];
+    notifyListeners();
   }
 
   /// 切换到指定线路并重新播放。

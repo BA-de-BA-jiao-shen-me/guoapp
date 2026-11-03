@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -149,5 +150,37 @@ func TestHongguoPlaybackDeviceIDStaysSixteenDigits(t *testing.T) {
 		if err != nil || len(id) != 16 || strings.Trim(id, "0123456789") != "" {
 			t.Fatal(id, err)
 		}
+	}
+}
+
+// 切换分集时缓存的注册设备被上游限流（空正文），应丢弃它、重新注册后再取流。
+func TestHongguoRegisteredMediaReregistersWhenCachedDeviceExhausted(t *testing.T) {
+	const firstVideo, secondVideo = "7694655440692448281", "7694655440692448282"
+	registers := 0
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			registers++
+			id := "712345678901234" + string(rune('0'+registers))
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"`+id+`","install_id_str":"`+id+`9"}`), nil
+		}
+		device := request.URL.Query().Get("device_id")
+		raw, _ := io.ReadAll(request.Body)
+		video := firstVideo
+		if strings.Contains(string(raw), secondVideo) {
+			video = secondVideo
+		}
+		if video == secondVideo && device == "7123456789012341" {
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+video+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/`+video+`.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
+	})
+	for _, video := range []string{firstVideo, secondVideo} {
+		media, err := d.resolveHongguoRegisteredMedia(context.Background(), video)
+		if err != nil || media.URL != "https://cdn.example/"+video+".mp4" {
+			t.Fatalf("%s: %v %+v", video, err, media)
+		}
+	}
+	if registers != 2 {
+		t.Fatalf("registers %d", registers)
 	}
 }

@@ -191,16 +191,46 @@ func hongguoRegisterBody(now int64, cdid string) ([]byte, error) {
 	return append(append([]byte{0x74, 0x63, 0x05, 0x10, 0x00, 0x00}, random...), encrypted...), nil
 }
 
+// resolveHongguoRegisteredMedia 先用缓存的注册设备取流；上游对同一注册设备通常只放行
+// 最初几次取流，之后对其它分集一律回空正文。缓存设备失败时丢弃它、重新注册一台再试一次，
+// 这样切换分集不会一直卡在被限流的旧设备上。
 func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
 	device, err := downloader.hongguoPlaybackDevice(ctx)
 	if err != nil {
 		return providerMedia{}, err
 	}
+	media, err := downloader.resolveHongguoRegisteredMediaWith(ctx, device, videoID)
+	if err == nil || ctx.Err() != nil {
+		return media, err
+	}
+	downloader.dropHongguoPlaybackDevice(device)
+	fresh, regErr := downloader.hongguoPlaybackDevice(ctx)
+	if regErr != nil || fresh.DeviceID == device.DeviceID {
+		return providerMedia{}, err
+	}
+	return downloader.resolveHongguoRegisteredMediaWith(ctx, fresh, videoID)
+}
+
+// dropHongguoPlaybackDevice 只在缓存仍是这台设备时清掉它，避免并发请求互相清掉刚注册的新设备。
+func (downloader *Downloader) dropHongguoPlaybackDevice(device hongguoPlaybackDevice) {
+	client := downloader.hongguoClient()
+	client.mu.Lock()
+	if client.playbackDevice.DeviceID == device.DeviceID {
+		client.playbackDevice = hongguoPlaybackDevice{}
+	}
+	client.mu.Unlock()
+}
+
+func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Context, device hongguoPlaybackDevice, videoID string) (providerMedia, error) {
 	var lastErr error
 	for _, contentType := range []string{"1004", "1"} {
 		result, err := downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, contentType)
 		if err != nil && ctx.Err() == nil {
+			signedErr := err
 			result, err = downloader.hongguoUnsignedMedia(ctx, device, videoID, contentType)
+			if err != nil {
+				err = fmt.Errorf("%v；无签名重试：%v", signedErr, err)
+			}
 		}
 		if err != nil {
 			lastErr = err
