@@ -18,10 +18,10 @@ class TaskSnapshot:
 
 def create_source_archive(destination, names):
     timestamp = datetime.datetime.now().astimezone().strftime('%Y%m%d%H%M')
-    archive = destination.parent / f'真果·鉴-{timestamp}.zip'
+    archive = destination.parent / f'短剧集合-{timestamp}.zip'
     suffix = 2
     while archive.exists():
-        archive = destination.parent / f'真果·鉴-{timestamp}-{suffix}.zip'
+        archive = destination.parent / f'短剧集合-{timestamp}-{suffix}.zip'
         suffix += 1
     with tempfile.NamedTemporaryFile(prefix='.source-archive-', suffix='.zip',
                                      dir=destination.parent, delete=False) as stream:

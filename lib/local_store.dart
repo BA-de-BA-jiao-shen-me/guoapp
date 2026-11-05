@@ -274,7 +274,7 @@ class LocalStore extends ChangeNotifier {
   bool get autoExport => !locked && (_bool('autoExport') ?? false);
 
   /// 绿色开关：默认开启，成人点播与成人直播一律不展示。
-  /// 绿果鉴只出绿色内容，完整模式对它没有意义：该版本下这里恒为 false，
+  /// 默认构建只出绿色内容，完整模式对它没有意义：该版本下这里恒为 false，
   /// 因此分级限制也不存在关闭的路径。
   bool get fullMode => allSourcesEnabled && (_bool('fullMode') ?? false);
   bool get greenMode => !fullMode || (_bool('greenMode') ?? true);

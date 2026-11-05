@@ -1,8 +1,8 @@
-# 绿果鉴
+# 短剧集合
 
-绿果鉴是独立运行的多端短剧应用，原名短剧库。目录、搜索、下载和播放都在本机完成，不依赖自建服务。当前源码版本是 **0.2.132+2138**。
+短剧集合是独立运行的多端短剧应用。目录、搜索、下载和播放都在本机完成，不依赖自建服务。当前源码版本是 **0.2.132+2138**。
 
-支持 Android、Windows 和 iOS。默认构建只包含绿色站源。加上 `--all-sources` 会构建全站源版，两套包的名称和产物分开，不要混用同一份原生库。
+支持 Android、Windows 和 iOS。默认构建只包含绿色站源；需要全部站源时，给构建脚本加上 `--all-sources`。两套构建的产物文件名不同，不要混用同一份原生库。
 
 历史版本说明在 [CHANGELOG.md](CHANGELOG.md)，按版本折叠。
 
@@ -49,7 +49,7 @@ python3 scripts/build_ios.py --export-options /path/to/ExportOptions.plist
 
 不带导出配置时得到未签名应用。签名 IPA 使用你自己的描述文件和 ExportOptions。
 
-产物在 `dist/android`、`dist/windows`、`dist/ios`。绿果鉴的 Windows 程序是 `lvguojian.exe`，解压后保留同目录的 DLL 和 `data`。安装包架构和手机不一致时，系统会报 `INSTALL_FAILED_NO_MATCHING_ABIS`。
+产物在 `dist/android`、`dist/windows`、`dist/ios`。默认版 Windows 程序是 `lvguojian.exe`，解压后保留同目录的 DLL 和 `data`。安装包架构和手机不一致时，系统会报 `INSTALL_FAILED_NO_MATCHING_ABIS`。
 
 ## 签名
 
@@ -91,4 +91,4 @@ flutter pub get --enforce-lockfile
 flutter run
 ```
 
-Windows 把 `--platform` 换成 `windows`，然后执行 `flutter run -d windows`。全站源版给原生构建加上 `--all-sources`，给 Flutter 加上 `--dart-define=ALL_SOURCES=true`。换回默认版时要重新构建默认核心，不要和全站源版的原生库混用。
+Windows 把 `--platform` 换成 `windows`，然后执行 `flutter run -d windows`。全部站源构建给原生构建加上 `--all-sources`，给 Flutter 加上 `--dart-define=ALL_SOURCES=true`。换回默认构建时要重新构建默认核心，不要和全部站源构建的原生库混用。

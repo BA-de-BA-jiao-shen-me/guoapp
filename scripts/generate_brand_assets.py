@@ -41,7 +41,7 @@ save(icon.resize((256, 256), Image.Resampling.LANCZOS),
      sizes=[(size, size) for size in (16, 24, 32, 48, 64, 128, 256)])
 font = ImageFont.truetype(str(options.font), 76)
 banner_icon = icon.resize((180, 180), Image.Resampling.LANCZOS)
-for name, resource in [('绿果鉴', 'tv_banner'), ('真果鉴', 'tv_banner_all_sources')]:
+for name, resource in [('短剧集合', 'tv_banner'), ('短剧集合', 'tv_banner_all_sources')]:
     banner = Image.new('RGB', (640, 360), '#101114')
     banner.paste(banner_icon, (44, 90), banner_icon)
     draw = ImageDraw.Draw(banner)

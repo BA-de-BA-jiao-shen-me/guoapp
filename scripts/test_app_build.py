@@ -40,14 +40,14 @@ class AppBuildTests(unittest.TestCase):
         for encoded in ['', dart_defines('ALL_SOURCES=false'), dart_defines('OTHER=true')]:
             variant = BuildVariant.from_dart_defines(encoded)
             self.assertFalse(variant.all_sources)
-            self.assertEqual(variant.name, '绿果鉴')
+            self.assertEqual(variant.name, '短剧集合')
             self.assertEqual(variant.slug, 'lvguojian')
 
     def test_full_edition_decodes_among_other_flutter_defines(self):
         variant = BuildVariant.from_dart_defines(dart_defines(
             'OTHER=中文', 'ALL_SOURCES=true', 'VALUE=a=b'))
         self.assertTrue(variant.all_sources)
-        self.assertEqual(variant.name, '真果鉴')
+        self.assertEqual(variant.name, '短剧集合')
         self.assertEqual(variant.slug, 'zhenguojian')
 
     def test_ios_branding_can_switch_editions_without_replacing_bundle_identity(self):
@@ -58,7 +58,7 @@ class AppBuildTests(unittest.TestCase):
             for enabled in [True, False]:
                 configure(path, dart_defines('ALL_SOURCES=' + str(enabled).lower()))
                 actual = plistlib.loads(path.read_bytes())
-                self.assertEqual(actual['CFBundleDisplayName'], '真果鉴' if enabled else '绿果鉴')
+                self.assertEqual(actual['CFBundleDisplayName'], '短剧集合')
                 self.assertEqual(actual['CFBundleName'], 'zhenguojian' if enabled else 'lvguojian')
                 for key, value in original.items():
                     self.assertEqual(actual[key], value)
@@ -67,10 +67,10 @@ class AppBuildTests(unittest.TestCase):
     def test_windows_reads_defines_from_flutter_tool_environment(self):
         branding = Path(__file__).resolve().parents[1] / 'windows/runner/app_branding.cmake'
         for flags, expected in [
-            ([], '绿果鉴'),
-            (['ALL_SOURCES=true'], '真果鉴'),
-            (['OTHER=true', 'ALL_SOURCES=false'], '绿果鉴'),
-            (['ALL_SOURCES=true', 'ALL_SOURCES=false'], '绿果鉴'),
+            ([], '短剧集合'),
+            (['ALL_SOURCES=true'], '短剧集合'),
+            (['OTHER=true', 'ALL_SOURCES=false'], '短剧集合'),
+            (['ALL_SOURCES=true', 'ALL_SOURCES=false'], '短剧集合'),
         ]:
             with self.subTest(flags=flags), tempfile.TemporaryDirectory() as temporary:
                 script = Path(temporary) / 'check.cmake'

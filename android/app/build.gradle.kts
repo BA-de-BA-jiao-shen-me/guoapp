@@ -38,8 +38,8 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders["appLabel"] = "绿果鉴"
-        manifestPlaceholders["appLabelFull"] = if (allSources) "真果鉴" else "绿果鉴"
+        manifestPlaceholders["appLabel"] = "短剧集合"
+        manifestPlaceholders["appLabelFull"] = "短剧集合"
         manifestPlaceholders["appBanner"] = "@drawable/tv_banner"
         manifestPlaceholders["appBannerFull"] =
             if (allSources) "@drawable/tv_banner_all_sources" else "@drawable/tv_banner"

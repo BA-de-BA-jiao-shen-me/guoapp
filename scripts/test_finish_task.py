@@ -38,7 +38,7 @@ class TaskSnapshotTests(unittest.TestCase):
         self.assertFalse((self.destination / 'android/key.properties').exists())
         self.assertFalse(synchronize(self.source, self.destination, check=True).changed)
         self.assertTrue(result.archive.is_file())
-        self.assertRegex(result.archive.name, r'^真果·鉴-\d{12}(?:-\d+)?\.zip$')
+        self.assertRegex(result.archive.name, r'^短剧集合-\d{12}(?:-\d+)?\.zip$')
         with zipfile.ZipFile(result.archive) as archive:
             names = set(archive.namelist())
         self.assertIn('guoapp/lib/电视.dart', names)

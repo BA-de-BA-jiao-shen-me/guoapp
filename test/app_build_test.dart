@@ -43,12 +43,12 @@ void main() {
         reason: '关闭绿色模式后成人站源应可选',
       );
     } else {
-      expect(store.fullMode, isFalse, reason: '绿果鉴没有完整模式，点版本号也开不出来');
-      expect(store.greenMode, isTrue, reason: '绿果鉴必须始终是绿色模式');
+      expect(store.fullMode, isFalse, reason: '默认构建没有完整模式，点版本号也开不出来');
+      expect(store.greenMode, isTrue, reason: '默认构建必须始终是绿色模式');
       expect(
         store.sources.any((source) => source.adult),
         isFalse,
-        reason: '绿果鉴的可用站源里不能出现成人站源',
+        reason: '默认构建的可用站源里不能出现成人站源',
       );
     }
     store.dispose();
@@ -61,7 +61,7 @@ void main() {
     });
     final store = LocalStore(await SharedPreferences.getInstance());
     if (!allSourcesEnabled) {
-      expect(store.greenMode, isTrue, reason: '绿果鉴忽略存量完整模式，保持绿色');
+      expect(store.greenMode, isTrue, reason: '默认构建忽略存量完整模式，保持绿色');
       store.dispose();
       return;
     }

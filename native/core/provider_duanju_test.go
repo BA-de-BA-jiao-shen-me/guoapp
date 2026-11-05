@@ -446,7 +446,7 @@ func TestDuanjuRejectsMismatchedSourceIDsAndCategories(t *testing.T) {
 func TestDuanjuSourceAvailabilityFollowsBuildVariant(t *testing.T) {
 	previous := buildAllSources
 	buildAllSources = "false"
-	// 绿果鉴按 nativeGreenSources 白名单开放已确认的绿色短剧站，成人站源必须不可用。
+	// 默认构建按 nativeGreenSources 白名单开放已确认的绿色短剧站，成人站源必须不可用。
 	if !nativeSourceAvailable(sourceYaguo) || !nativeSourceAvailable(sourceWuguo) {
 		t.Fatal("green build must expose whitelisted duanju sources")
 	}

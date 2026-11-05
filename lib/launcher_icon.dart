@@ -5,8 +5,8 @@ import 'package:flutter/services.dart';
 
 import 'app_build.dart';
 
-/// 真果鉴安装后先以绿果鉴的名称与图标出现，只有激活分级限制开关才换成
-/// 真果鉴的入口；绿果鉴不提供切换，桌面入口始终是绿果鉴。
+/// 全部站源构建安装后先显示默认桌面图标，只有激活分级限制开关才换成
+/// 完整模式入口；默认构建不提供切换，桌面入口始终只有一种。
 class LauncherIcon {
   static const _channel = MethodChannel('duanju/device');
 

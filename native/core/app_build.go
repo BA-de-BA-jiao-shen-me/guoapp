@@ -6,8 +6,8 @@ var buildAllSources = "false"
 
 var errNativeBuildSource = errors.New("当前版本不包含此站源")
 
-// 绿果鉴只装明确认定为绿色的站源。这里用白名单而不是排除成人站源：
-// 新接入的站源在人工确认之前不会自动进入绿色版本，避免色情站源再次漏进绿果鉴。
+// 默认构建只装明确认定为绿色的站源。这里用白名单而不是排除成人站源：
+// 新接入的站源在人工确认之前不会自动进入绿色版本，避免色情站源再次漏进默认构建。
 var nativeGreenSources = map[string]bool{
 	sourceHongguo: true,
 	"yaguo":       true,
