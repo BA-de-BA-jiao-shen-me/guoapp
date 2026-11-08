@@ -262,6 +262,9 @@ func (manager *nativeDownloads) downloadFileAttempt(ctx context.Context, address
 			}
 			inactivity.Reset(30 * time.Second)
 			progress(received, total)
+			if requestCtx.Err() != nil {
+				break
+			}
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
