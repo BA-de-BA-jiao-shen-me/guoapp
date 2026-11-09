@@ -92,7 +92,7 @@ void main() {
     await settle(tester);
     await waitForChapter(tester, 'c4');
     expect(repository.mediaRequests, ['c4']);
-    expect(scripted.opened.last.uri, contains('/c4.m4a'));
+    expect(scriptedUri(), contains('/c4.m4a'));
     expect(AudiobookSession.instance.chapter?.id, 'c4');
     await resetSession(tester);
   });
@@ -109,7 +109,7 @@ void main() {
     await settle(tester);
     await waitForChapter(tester, 'c5');
     expect(repository.mediaRequests.last, 'c5');
-    expect(scripted.opened.last.uri, contains('/c5.m4a'));
+    expect(scriptedUri(), contains('/c5.m4a'));
     expect(AudiobookSession.instance.chapter?.id, 'c5');
     await resetSession(tester);
   });
@@ -131,11 +131,33 @@ Future<void> settle(WidgetTester tester) async {
   }
 }
 
+/// 等到目标章真正 ready，且脚本播放器已经 open 到对应音频。
+/// 只看 chapter.id 不够：start() 一改 index 就会变，open/player.open 可能还没跑完。
 Future<void> waitForChapter(WidgetTester tester, String id) async {
-  for (var i = 0; i < 40; i++) {
-    if (AudiobookSession.instance.chapter?.id == id) return;
+  for (var i = 0; i < 80; i++) {
+    final session = AudiobookSession.instance;
+    final opened = scriptedUri();
+    if (session.chapter?.id == id &&
+        session.ready &&
+        opened != null &&
+        opened.contains('/$id.m4a')) {
+      return;
+    }
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump(const Duration(milliseconds: 50));
   }
-  expect(AudiobookSession.instance.chapter?.id, id);
+  final session = AudiobookSession.instance;
+  expect(session.chapter?.id, id, reason: 'chapter.id');
+  expect(session.ready, isTrue, reason: 'session.ready');
+  expect(scriptedUri(), contains('/$id.m4a'), reason: 'opened uri');
+}
+
+String? scriptedUri() {
+  // debugPlayerFactory 每次新建都会覆盖测试里的 scripted 引用；
+  // 这里从会话里的真实 platform 读，避免拿到旧实例。
+  final platform = AudiobookSession.instance.player.platform;
+  if (platform is ScriptedPlayer && platform.opened.isNotEmpty) {
+    return platform.opened.last.uri;
+  }
+  return null;
 }

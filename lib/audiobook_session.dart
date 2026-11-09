@@ -108,10 +108,11 @@ class AudiobookSession extends ChangeNotifier {
   }) async {
     if (chapters.isEmpty) return;
     final target = index.clamp(0, chapters.length - 1).toInt();
+    // 只在已经 ready 时复用会话。loading 也算 same 会踩坑：旧 open
+    // 被 generation 作废后仍留下 loading=true，再点同一章会直接 return，
+    // 音频永远打不开。
     final same =
-        this.book?.id == book.id &&
-        chapter?.id == chapters[target].id &&
-        (ready || loading);
+        this.book?.id == book.id && chapter?.id == chapters[target].id && ready;
     this.repository = repository;
     this.api = api;
     this.store = store;
@@ -190,6 +191,7 @@ class AudiobookSession extends ChangeNotifier {
     _handledEnd = true;
     _heardProgress = false;
     _asleep = false;
+
     final localFile = store.hasLocal(book.id, current.id);
     final resume = at ?? store.heardSeconds(book.id, current.id);
     ready = false;
