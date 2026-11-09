@@ -123,6 +123,8 @@ class AudiobookSession extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    // 先抬 generation，作废还在飞的 open，避免旧章取流/player.open 在切章后晚到。
+    _generation++;
     await persist();
     this.book = book;
     this.chapters = List<FanqieChapter>.of(chapters);

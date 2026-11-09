@@ -90,6 +90,7 @@ void main() {
     final repository = await pumpCatalog(tester);
     await tester.tap(find.byKey(const ValueKey('audiobook-chapter-c4')));
     await settle(tester);
+    await waitForChapter(tester, 'c4');
     expect(repository.mediaRequests, ['c4']);
     expect(scripted.opened.last.uri, contains('/c4.m4a'));
     expect(AudiobookSession.instance.chapter?.id, 'c4');
@@ -100,12 +101,13 @@ void main() {
     final repository = await pumpCatalog(tester);
     await tester.tap(find.byKey(const ValueKey('audiobook-chapter-c1')));
     await settle(tester);
-    expect(AudiobookSession.instance.chapter?.id, 'c1');
+    await waitForChapter(tester, 'c1');
     await tester.pageBack();
     await tester.pumpAndSettle();
     await settle(tester);
     await tester.tap(find.byKey(const ValueKey('audiobook-chapter-c5')));
     await settle(tester);
+    await waitForChapter(tester, 'c5');
     expect(repository.mediaRequests.last, 'c5');
     expect(scripted.opened.last.uri, contains('/c5.m4a'));
     expect(AudiobookSession.instance.chapter?.id, 'c5');
@@ -123,8 +125,17 @@ Future<void> resetSession(WidgetTester tester) => tester.runAsync(
 );
 
 Future<void> settle(WidgetTester tester) async {
-  for (var i = 0; i < 10; i++) {
+  for (var i = 0; i < 20; i++) {
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump(const Duration(milliseconds: 50));
   }
+}
+
+Future<void> waitForChapter(WidgetTester tester, String id) async {
+  for (var i = 0; i < 40; i++) {
+    if (AudiobookSession.instance.chapter?.id == id) return;
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(AudiobookSession.instance.chapter?.id, id);
 }
