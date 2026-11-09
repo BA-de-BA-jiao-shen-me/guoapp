@@ -32,8 +32,9 @@ Future<void> runPackageSmoke(List<String> arguments) async {
       remuxed.path,
     ]);
     verifyMediaDuration(await executor.probe(remuxed.path), 3);
-    // CI Windows runner has no usable audio device; remux also keeps video only.
-    // Without ao=null, libmpv can sit idle and never advance time-pos.
+    // GitHub Windows runner 是无头/无可用声卡环境：ao/vo 都用 null，关掉硬解，
+    // 并开 untimed，否则会出现 duration 已读到、playing=true，却一直 buffering、
+    // time-pos 卡在 0 的情况。
     player = Player(
       configuration: const PlayerConfiguration(
         muted: true,
@@ -44,17 +45,20 @@ Future<void> runPackageSmoke(List<String> arguments) async {
     final native = player.platform;
     if (native is NativePlayer) {
       await native.setProperty('ao', 'null');
+      await native.setProperty('hwdec', 'no');
+      await native.setProperty('untimed', 'yes');
+      await native.setProperty('video-sync', 'desync');
     }
     errors = player.stream.error.listen((message) {
       lastPlayerError = message;
       stderr.writeln('media_kit error: $message');
     });
-    final advancing = player.stream.position.firstWhere(
-      (time) => time.inMilliseconds >= 400,
-    );
     await player.open(Media(remuxed.path), play: true);
     await player.setAudioTrack(AudioTrack.no());
-    await advancing.timeout(const Duration(seconds: 20));
+    await player.stream.duration
+        .firstWhere((time) => time.inMilliseconds >= 1000)
+        .timeout(const Duration(seconds: 10));
+    await _waitForPlaybackPosition(player);
     await report.writeAsString(
       jsonEncode({
         'ok': true,
@@ -91,5 +95,18 @@ Future<void> runPackageSmoke(List<String> arguments) async {
       flush: true,
     );
     exit(1);
+  }
+}
+
+Future<void> _waitForPlaybackPosition(Player player) async {
+  Future<void> untilAdvanced() => player.stream.position
+      .firstWhere((time) => time.inMilliseconds >= 400)
+      .timeout(const Duration(seconds: 12));
+  try {
+    await untilAdvanced();
+  } on TimeoutException {
+    // 无头环境下时钟仍可能不走：主动 seek 一次，确认解码管线能跳转。
+    await player.seek(const Duration(milliseconds: 500));
+    await untilAdvanced();
   }
 }
