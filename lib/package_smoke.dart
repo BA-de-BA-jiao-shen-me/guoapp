@@ -12,6 +12,7 @@ Future<void> runPackageSmoke(List<String> arguments) async {
   final report = File(arguments[1]), input = arguments[2];
   Player? player;
   StreamSubscription<String>? errors;
+  StreamSubscription<PlayerLog>? logs;
   String? lastPlayerError;
   try {
     final repository = NativeRepository();
@@ -32,9 +33,10 @@ Future<void> runPackageSmoke(List<String> arguments) async {
       remuxed.path,
     ]);
     verifyMediaDuration(await executor.probe(remuxed.path), 3);
-    // GitHub Windows runner 是无头/无可用声卡环境：ao/vo 都用 null，关掉硬解，
-    // 并开 untimed，否则会出现 duration 已读到、playing=true，却一直 buffering、
-    // time-pos 卡在 0 的情况。
+    // 没有 VideoController 时 media_kit 默认 vid=no（见 media_kit NativePlayer._create）。
+    // 冒烟片源是纯视频（remux 时只 map 了 0:v:0），音轨又设成 no，若不显式打开视频轨，
+    // mpv 没有任何可播的流，时钟不会走：playing=true、buffering=true、position 永远 0。
+    // 这里显式选 vid=auto，让 vo=null 真正解码视频帧并推进 time-pos。
     player = Player(
       configuration: const PlayerConfiguration(
         muted: true,
@@ -44,21 +46,25 @@ Future<void> runPackageSmoke(List<String> arguments) async {
     );
     final native = player.platform;
     if (native is NativePlayer) {
+      // 无头 runner 没有可用声卡。
       await native.setProperty('ao', 'null');
-      await native.setProperty('hwdec', 'no');
-      await native.setProperty('untimed', 'yes');
-      await native.setProperty('video-sync', 'desync');
     }
+    logs = player.stream.log.listen(
+      (log) => stderr.writeln('mpv ${log.level} [${log.prefix}] ${log.text}'),
+    );
     errors = player.stream.error.listen((message) {
       lastPlayerError = message;
       stderr.writeln('media_kit error: $message');
     });
+    await player.setVideoTrack(VideoTrack.auto());
     await player.open(Media(remuxed.path), play: true);
     await player.setAudioTrack(AudioTrack.no());
     await player.stream.duration
         .firstWhere((time) => time.inMilliseconds >= 1000)
         .timeout(const Duration(seconds: 10));
-    await _waitForPlaybackPosition(player);
+    await player.stream.position
+        .firstWhere((time) => time.inMilliseconds >= 400)
+        .timeout(const Duration(seconds: 20));
     await report.writeAsString(
       jsonEncode({
         'ok': true,
@@ -70,6 +76,7 @@ Future<void> runPackageSmoke(List<String> arguments) async {
       flush: true,
     );
     await errors.cancel();
+    await logs.cancel();
     await player.dispose();
     exit(0);
   } catch (error) {
@@ -84,6 +91,7 @@ Future<void> runPackageSmoke(List<String> arguments) async {
             'completed': state.completed,
           };
     await errors?.cancel();
+    await logs?.cancel();
     await player?.dispose();
     await report.writeAsString(
       jsonEncode({
@@ -95,18 +103,5 @@ Future<void> runPackageSmoke(List<String> arguments) async {
       flush: true,
     );
     exit(1);
-  }
-}
-
-Future<void> _waitForPlaybackPosition(Player player) async {
-  Future<void> untilAdvanced() => player.stream.position
-      .firstWhere((time) => time.inMilliseconds >= 400)
-      .timeout(const Duration(seconds: 12));
-  try {
-    await untilAdvanced();
-  } on TimeoutException {
-    // 无头环境下时钟仍可能不走：主动 seek 一次，确认解码管线能跳转。
-    await player.seek(const Duration(milliseconds: 500));
-    await untilAdvanced();
   }
 }
