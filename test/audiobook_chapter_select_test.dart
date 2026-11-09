@@ -133,8 +133,9 @@ Future<void> settle(WidgetTester tester) async {
 
 /// 等到目标章真正 ready，且脚本播放器已经 open 到对应音频。
 /// 只看 chapter.id 不够：start() 一改 index 就会变，open/player.open 可能还没跑完。
+/// CI 整套并发时 Duration.zero 不够把真实异步跑完，改用短真实延迟。
 Future<void> waitForChapter(WidgetTester tester, String id) async {
-  for (var i = 0; i < 80; i++) {
+  for (var i = 0; i < 120; i++) {
     final session = AudiobookSession.instance;
     final opened = scriptedUri();
     if (session.chapter?.id == id &&
@@ -143,12 +144,24 @@ Future<void> waitForChapter(WidgetTester tester, String id) async {
         opened.contains('/$id.m4a')) {
       return;
     }
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
     await tester.pump(const Duration(milliseconds: 50));
   }
   final session = AudiobookSession.instance;
-  expect(session.chapter?.id, id, reason: 'chapter.id');
-  expect(session.ready, isTrue, reason: 'session.ready');
+  expect(
+    session.chapter?.id,
+    id,
+    reason:
+        'chapter.id loading=${session.loading} error=${session.error} uri=${scriptedUri()}',
+  );
+  expect(
+    session.ready,
+    isTrue,
+    reason:
+        'session.ready loading=${session.loading} error=${session.error} uri=${scriptedUri()}',
+  );
   expect(scriptedUri(), contains('/$id.m4a'), reason: 'opened uri');
 }
 

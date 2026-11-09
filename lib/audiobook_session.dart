@@ -208,11 +208,17 @@ class AudiobookSession extends ChangeNotifier {
       Map<String, dynamic>? remote;
       if (!localFile) {
         remote = await repository.audiobookMedia(book.id, current.id);
-        if (generation != _generation) return;
+        if (generation != _generation) {
+          _opening = false;
+          return;
+        }
         final total = (remote['duration'] as num?)?.toDouble() ?? 0;
         if (total > 0) await store.noteDuration(book.id, current.id, total);
       }
-      if (generation != _generation) return;
+      if (generation != _generation) {
+        _opening = false;
+        return;
+      }
       final target = audiobookOpenTarget(
         store: store,
         bookId: book.id,
@@ -237,7 +243,10 @@ class AudiobookSession extends ChangeNotifier {
         );
         if (!target.local) await platform.setProperty('network-timeout', '20');
       }
-      if (generation != _generation) return;
+      if (generation != _generation) {
+        _opening = false;
+        return;
+      }
       await player.setRate(speed);
       await player.open(
         Media(
@@ -248,7 +257,10 @@ class AudiobookSession extends ChangeNotifier {
               : null,
         ),
       );
-      if (generation != _generation) return;
+      if (generation != _generation) {
+        _opening = false;
+        return;
+      }
       ready = true;
       _opening = false;
       _handledEnd = false;
