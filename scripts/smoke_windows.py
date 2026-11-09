@@ -29,11 +29,26 @@ def main():
                         '-i', 'testsrc2=size=160x90:rate=12', '-t', '3',
                         '-c:v', 'libx264', '-threads', '1', str(media)], check=True)
         report = directory / 'result.json'
-        subprocess.run([str(directory / (variant.slug + '.exe')), '--package-smoke', str(report), str(media)],
-                       cwd=directory, check=True, timeout=90)
-        evidence = json.loads(report.read_text(encoding='utf-8'))
+        completed = subprocess.run(
+            [str(directory / (variant.slug + '.exe')), '--package-smoke', str(report), str(media)],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if completed.stdout:
+            print(completed.stdout, end='' if completed.stdout.endswith('\n') else '\n')
+        if completed.stderr:
+            print(completed.stderr, end='' if completed.stderr.endswith('\n') else '\n')
+        evidence_text = report.read_text(encoding='utf-8') if report.exists() else ''
+        if evidence_text:
+            print(evidence_text if evidence_text.endswith('\n') else evidence_text + '\n', end='')
+        if completed.returncode != 0:
+            detail = evidence_text or f'exit={completed.returncode}'
+            raise SystemExit(f'Windows 包启动验收失败: {detail}')
+        evidence = json.loads(evidence_text)
         if evidence.get('ok') is not True:
-            raise SystemExit('Windows 包启动验收未通过。')
+            raise SystemExit(f'Windows 包启动验收未通过: {evidence}')
         output = root / 'build' / 'windows-package-smoke.json'
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(evidence, indent=2) + '\n')
