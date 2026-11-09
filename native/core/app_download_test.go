@@ -126,8 +126,19 @@ func TestNativeDownloadRangeResumeAndAddressIsolation(t *testing.T) {
 		mu.Lock()
 		ranges = append(ranges, r.Header.Get("Range"))
 		validators = append(validators, r.Header.Get("If-Range"))
+		first := len(ranges) == 1
 		mu.Unlock()
 		w.Header().Set("ETag", "\"v1\"")
+		if first {
+			// Send only a prefix, then hold the connection open until the client
+			// cancels, so the interruption is deterministic even with GOMAXPROCS=1.
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(data[:65536])
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
 		http.ServeContent(w, r, "media.mp4", time.Time{}, bytes.NewReader(data))
 	}))
 	t.Cleanup(upstream.Close)
