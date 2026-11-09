@@ -32,6 +32,10 @@ class AudiobookSession extends ChangeNotifier {
 
   static final AudiobookSession instance = AudiobookSession._();
 
+  /// 测试用：替换真实播放器（测试环境没有 libmpv）。
+  @visibleForTesting
+  static Player Function()? debugPlayerFactory;
+
   Player? _player;
   final List<StreamSubscription<Object?>> _subs = [];
   Timer? _clock;
@@ -71,7 +75,7 @@ class AudiobookSession extends ChangeNotifier {
   Player get player {
     final existing = _player;
     if (existing != null) return existing;
-    final created = Player();
+    final created = debugPlayerFactory?.call() ?? Player();
     _player = created;
     _subs
       ..add(created.stream.position.listen(_notePosition))
@@ -104,23 +108,28 @@ class AudiobookSession extends ChangeNotifier {
   }) async {
     if (chapters.isEmpty) return;
     final target = index.clamp(0, chapters.length - 1).toInt();
+    // 只在已经 ready 时复用会话。loading 也算 same 会踩坑：旧 open
+    // 被 generation 作废后仍留下 loading=true，再点同一章会直接 return，
+    // 音频永远打不开。
     final same =
-        this.book?.id == book.id &&
-        chapter?.id == chapters[target].id &&
-        (ready || loading);
+        this.book?.id == book.id && chapter?.id == chapters[target].id && ready;
     this.repository = repository;
     this.api = api;
     this.store = store;
+    // 参数 index 和字段同名：这里必须写 this.index，否则只改了参数，
+    // 会话仍停在原来的章节（新会话就是第 1 章）。
     if (same) {
       this.chapters = List<FanqieChapter>.of(chapters);
-      index = target;
+      this.index = target;
       notifyListeners();
       return;
     }
+    // 先抬 generation，作废还在飞的 open，避免旧章取流/player.open 在切章后晚到。
+    _generation++;
     await persist();
     this.book = book;
     this.chapters = List<FanqieChapter>.of(chapters);
-    index = target;
+    this.index = target;
     await open();
   }
 
@@ -182,6 +191,7 @@ class AudiobookSession extends ChangeNotifier {
     _handledEnd = true;
     _heardProgress = false;
     _asleep = false;
+
     final localFile = store.hasLocal(book.id, current.id);
     final resume = at ?? store.heardSeconds(book.id, current.id);
     ready = false;

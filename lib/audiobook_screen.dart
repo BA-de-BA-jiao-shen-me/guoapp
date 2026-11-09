@@ -798,7 +798,8 @@ class _AudiobookPlayerScreenState extends State<AudiobookPlayerScreen> {
   void dispose() {
     _session.removeListener(_onSession);
     // 只关界面，不停播放：播放器归全局会话所有，离开后继续在后台朗读。
-    unawaited(_session.persist());
+    // 记进度会通知目录页刷新，放到这一帧拆树之后，避免在锁定期间 setState。
+    scheduleMicrotask(() => unawaited(_session.persist()));
     _textScroll.dispose();
     super.dispose();
   }
