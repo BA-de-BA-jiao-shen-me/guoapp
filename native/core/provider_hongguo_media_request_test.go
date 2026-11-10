@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-// 上游 2026-11 起对不带签名的注册设备取流回空正文：必须先用注册设备号带六个签名头请求。
+// 上游 2026-11 起对不带签名的注册设备取流回空正文：必须先用注册设备号带六个签名头请求，
+// 并且（2026-11-10 起）必须走单集 video_model 接口。
 func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 	const videoID = "7694655440692448281"
 	var body map[string]any
@@ -28,7 +29,7 @@ func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 			}
 			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
 		}
-		if request.URL.Path != hongguoMediaPath {
+		if request.URL.Path != hongguoVideoModelPath {
 			t.Errorf("path %s", request.URL.Path)
 		}
 		for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Ladon", "X-Argus", "X-Helios", "X-Medusa"} {
@@ -42,17 +43,21 @@ func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 		if json.NewDecoder(request.Body).Decode(&body) != nil {
 			t.Error("body")
 		}
-		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+videoID+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/plain.mp4","codec_type":"h264","definition":"1080p","vheight":"1920"}]}}}}`), nil
+		// 与实测响应同形：data.video_model 是 JSON 字符串。
+		model, _ := json.Marshal(map[string]any{"video_list": []any{map[string]any{"main_url": "https://cdn.example/plain.mp4", "codec_type": "h264", "definition": "1080p", "vheight": "1920"}}})
+		payload, _ := json.Marshal(map[string]any{"code": 0, "data": map[string]any{"video_model": string(model)}})
+		return rankingHTTPResponse(request, 200, string(payload)), nil
 	})
 	media, err := d.resolveHongguoAppMedia(context.Background(), videoID)
 	if err != nil || media.URL != "https://cdn.example/plain.mp4" || media.Quality != 1080 || !sawRegister {
 		t.Fatalf("%v register %v %+v", err, sawRegister, media)
 	}
 	param, _ := body["biz_param"].(map[string]any)
-	mixed, _ := body["mixed_video_id_map"].(map[string]any)
-	ids, _ := mixed["1004"].([]any)
-	if param["video_platform"] != json.Number("1024") && param["video_platform"] != float64(1024) || param["need_all_video_definition"] != true || len(ids) != 1 || ids[0] != videoID {
+	if body["video_id"] != videoID || param["video_platform"] != float64(3) || param["need_all_video_definition"] != true || param["video_id_type"] != float64(0) {
 		t.Fatalf("payload %+v", body)
+	}
+	if _, legacy := body["mixed_video_id_map"]; legacy {
+		t.Fatalf("payload still uses multi_video_model shape %+v", body)
 	}
 }
 
@@ -85,6 +90,9 @@ func TestHongguoRegisteredMediaRetriesRealPersonKey(t *testing.T) {
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		if strings.Contains(request.URL.Path, "device_register") {
 			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
+		}
+		if request.URL.Path == hongguoVideoModelPath {
+			return rankingHTTPResponse(request, 200, ""), nil
 		}
 		var body map[string]any
 		if json.NewDecoder(request.Body).Decode(&body) != nil {
@@ -202,5 +210,48 @@ func TestHongguoPlaybackSignatureAlwaysUsesAcceptedBranch(t *testing.T) {
 		if got := hongguoSignBranch(request.URL.RawQuery, body, uint32(now.Unix())); got != hongguoSignValidBranch {
 			t.Fatalf("branch %d for %s", got, request.URL.RawQuery)
 		}
+	}
+}
+
+// 模拟 2026-11-10 实测到的上游行为：multi_video_model 对任何设备都回空正文；
+// video_model 每台新注册设备只有第一次有内容。连续多集都必须取到流，
+// 且单集接口必须是每台设备的第一个取流请求（否则设备会被浪费掉）。
+func TestHongguoRegisteredMediaUsesSingleVideoModelFirst(t *testing.T) {
+	videos := []string{"7694655440692448281", "7694655440692448282", "7694655440692448283", "7694655440692448284", "7694655440692448285"}
+	registers, multiCalls := 0, 0
+	used := map[string]bool{}
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			registers++
+			id := fmt.Sprintf("71234567890%05d", registers)
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"`+id+`","install_id_str":"`+id+`"}`), nil
+		}
+		device := request.URL.Query().Get("device_id")
+		first := !used[device]
+		used[device] = true
+		if request.URL.Path == hongguoMediaPath {
+			multiCalls++
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		if request.URL.Path != hongguoVideoModelPath || !first || request.Header.Get("X-Medusa") == "" {
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		var body map[string]any
+		if json.NewDecoder(request.Body).Decode(&body) != nil {
+			t.Fatal("body")
+		}
+		video, _ := body["video_id"].(string)
+		model, _ := json.Marshal(map[string]any{"video_list": []any{map[string]any{"main_url": "https://cdn.example/" + video + ".mp4", "codec_type": "h264", "definition": "720p", "vheight": "1280"}}})
+		payload, _ := json.Marshal(map[string]any{"code": 0, "data": map[string]any{"video_model": string(model)}})
+		return rankingHTTPResponse(request, 200, string(payload)), nil
+	})
+	for _, video := range videos {
+		media, err := d.resolveHongguoMedia(context.Background(), Task{DramaID: providerDramaID(sourceHongguo, "7530119479875882009"), Chapter: Chapter{VideoURL: "hongguo-cenc://" + video}})
+		if err != nil || media.URL != "https://cdn.example/"+video+".mp4" {
+			t.Fatalf("%s: %v %+v", video, err, media)
+		}
+	}
+	if registers != len(videos) || multiCalls != 0 {
+		t.Fatalf("registers %d multi calls %d", registers, multiCalls)
 	}
 }

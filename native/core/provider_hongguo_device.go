@@ -209,7 +209,23 @@ func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context,
 
 func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Context, device hongguoPlaybackDevice, videoID string) (providerMedia, error) {
 	var lastErr error
-	for _, contentType := range []string{"1004", "1"} {
+	// 先走单集 video_model（当前唯一可用的接口），再退回旧的 multi_video_model。
+	// 注册设备只有第一次取流有效，所以单集接口必须排在最前面。
+	for _, contentType := range []string{"", "1004", "1"} {
+		if ctx.Err() != nil {
+			return providerMedia{}, ctx.Err()
+		}
+		if contentType == "" {
+			result, err := downloader.hongguoSignedRegisteredVideoModel(ctx, device, videoID)
+			if err == nil {
+				var media providerMedia
+				if media, err = downloader.hongguoRegisteredResultMedia(ctx, result, videoID); err == nil {
+					return media, nil
+				}
+			}
+			lastErr = err
+			continue
+		}
 		result, err := downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, contentType)
 		if err != nil && ctx.Err() == nil {
 			signedErr := err
@@ -222,25 +238,9 @@ func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Cont
 			lastErr = err
 			continue
 		}
-		model, err := hongguoVideoModel(result, videoID)
+		media, err := downloader.hongguoRegisteredResultMedia(ctx, result, videoID)
 		if err != nil {
 			lastErr = err
-			continue
-		}
-		if followed, ferr := downloader.hongguoFallbackModel(ctx, result, model, videoID); ferr == nil && len(followed) > 0 {
-			model = followed
-		}
-		if len(model) == 0 {
-			lastErr = errors.New("红果注册设备未返回正片")
-			continue
-		}
-		media, err := selectHongguoAppMedia(model)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if hongguoPublicVideoPattern.MatchString(media.URL) && media.Duration < 30*time.Second {
-			lastErr = errors.New("红果注册设备只返回了试看")
 			continue
 		}
 		return media, nil
@@ -249,6 +249,45 @@ func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Cont
 		lastErr = errors.New("红果注册设备未返回正片")
 	}
 	return providerMedia{}, lastErr
+}
+
+func (downloader *Downloader) hongguoRegisteredResultMedia(ctx context.Context, result map[string]any, videoID string) (providerMedia, error) {
+	model, err := hongguoVideoModel(result, videoID)
+	if err != nil {
+		return providerMedia{}, err
+	}
+	if followed, ferr := downloader.hongguoFallbackModel(ctx, result, model, videoID); ferr == nil && len(followed) > 0 {
+		model = followed
+	}
+	if len(model) == 0 {
+		return providerMedia{}, errors.New("红果注册设备未返回正片")
+	}
+	media, err := selectHongguoAppMedia(model)
+	if err != nil {
+		return providerMedia{}, err
+	}
+	if hongguoPublicVideoPattern.MatchString(media.URL) && media.Duration < 30*time.Second {
+		return providerMedia{}, errors.New("红果注册设备只返回了试看")
+	}
+	return media, nil
+}
+
+// hongguoVideoModelPayload 是单集 video_model 的请求体（与官方客户端 GetVideoModelRequest 一致）。
+func hongguoVideoModelPayload(videoID string) map[string]any {
+	return map[string]any{
+		"video_id": videoID,
+		"biz_param": map[string]any{
+			"video_id_type": 0, "need_all_video_definition": true, "video_platform": 3,
+		},
+	}
+}
+
+// hongguoSignedRegisteredVideoModel 用新注册的设备带签名请求单集 video_model。
+func (downloader *Downloader) hongguoSignedRegisteredVideoModel(ctx context.Context, device hongguoPlaybackDevice, videoID string) (map[string]any, error) {
+	signed := context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
+	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, hongguoVideoModelPath, url.Values{
+		"device_id": {device.DeviceID}, "iid": {device.Install},
+	}, hongguoVideoModelPayload(videoID), false)
 }
 
 // hongguoSignedRegisteredMedia 用注册得到的真实设备号，并带上六个播放签名头请求取流。
