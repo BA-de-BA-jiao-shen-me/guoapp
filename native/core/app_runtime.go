@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -303,7 +304,8 @@ func nativeRequestAction(raw string) string {
 
 func NativeRequest(raw string) (result string) {
 	defer func() {
-		if recover() != nil {
+		if value := recover(); value != nil {
+			recordRecoveredPanic(nativeRequestAction(raw), value, debug.Stack())
 			result = `{"ok":false,"error":"本地核心处理失败，请重试"}`
 		}
 	}()
@@ -373,6 +375,11 @@ func nativeDispatch(input nativeInput) (any, error) {
 				return nil, err
 			}
 			nativeState.engine = engine
+			if crashOutputEnabled {
+				if err := installCrashOutput(input.Directory); err != nil {
+					fmt.Fprintf(os.Stderr, "崩溃日志无法写入：%v\n", publicError(err))
+				}
+			}
 		}
 		nativeState.Unlock()
 		return map[string]any{"version": "0.2.17", "standalone": true, "allSources": buildAllSources == "true"}, nil
