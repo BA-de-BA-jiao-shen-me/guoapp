@@ -3,6 +3,13 @@
 历史版本说明从 README 移出，按版本折叠。
 
 <details>
+<summary>0.2.134 修复红果取流失败（改走单集 video_model），并新增崩溃日志。…</summary>
+
+0.2.134 修复红果取流失败：多集接口 `multi_video_model` 已停用，所有请求都回空内容；改为优先走单集 `video_model`，失败再退回旧接口，每集仍注册新设备（PR #6）。备用服务器 `djapi.999888456.xyz` 本身 TLS 握手失败，不是本仓库能修的。新增崩溃日志：Go 核心致命错误写入 `logs/crash.log`（Windows：`%APPDATA%\短剧集合\短剧集合\logs\crash.log`）。本版发布安卓包和 Windows 包。
+
+</details>
+
+<details>
 <summary>0.2.133 修复听书目录选章总从第 1 章开始、下载暂停/取消后续传，以及续传测试偶发失败。…</summary>
 
 0.2.133 修复听书从目录选章总是打开第 1 章：`AudiobookSession.start` 参数与字段同名，赋值只改了参数；改为写入 `this.index`，并在切章时作废进行中的 open（PR #5）。下载取消后立即停止读取，避免本地回环把整文件读完却判失败，续传可真正留下 `.part`。范围续传测试改为第一次只发 64KB 再挂起，避免竞态。本版只发布安卓包。
