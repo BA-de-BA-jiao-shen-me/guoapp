@@ -22,6 +22,9 @@ const (
 	hongguoLandpagePath = "/reading/distribution/category/landpage/v1/"
 	hongguoDetailPath   = "/novel/player/multi_video_detail/v1/"
 	hongguoMediaPath    = "/novel/player/multi_video_model/v1/"
+	// hongguoVideoModelPath 是单集取流接口。实测（2026-11-10）：multi_video_model 对新注册设备
+	// 带签名也一律回 HTTP 200 空正文，而同一台新设备请求 video_model 能拿到正片 video_model。
+	hongguoVideoModelPath = "/novel/player/video_model/v1/"
 )
 
 const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"

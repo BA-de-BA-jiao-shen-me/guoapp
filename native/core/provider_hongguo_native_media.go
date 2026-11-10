@@ -29,12 +29,9 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 	if err != nil {
 		return providerMedia{}, err
 	}
-	payload := map[string]any{
-		"video_id": videoID, "content_type": 1,
-		"biz_param": map[string]any{"need_all_video_definition": true, "video_platform": 1024},
-	}
+	payload := hongguoVideoModelPayload(videoID)
 	ctx = context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
-	result, err := downloader.hongguoAppRequestOrdered(ctx, http.MethodPost, hongguoMediaPath, url.Values{
+	result, err := downloader.hongguoAppRequestOrdered(ctx, http.MethodPost, hongguoVideoModelPath, url.Values{
 		"device_id": {deviceID}, "iid": {deviceID},
 	}, payload, false)
 	if err != nil {
