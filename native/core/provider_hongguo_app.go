@@ -60,6 +60,8 @@ type hongguoAppClient struct {
 	suggestPending map[string]*hongguoSuggestionCall
 	danmaku        map[string]hongguoDanmakuCacheEntry
 	danmakuPending map[string]*hongguoDanmakuCall
+	// playbackStrategy 是上次取流成功的 hongguoPlaybackStrategies 下标。
+	playbackStrategy int
 }
 
 func (downloader *Downloader) hongguoClient() *hongguoAppClient {

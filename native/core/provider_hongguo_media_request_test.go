@@ -15,8 +15,7 @@ import (
 	"time"
 )
 
-// 上游 2026-11 起对不带签名的注册设备取流回空正文：必须先用注册设备号带六个签名头请求，
-// 并且（2026-11-10 起）必须走单集 video_model 接口。
+// 2026-11-10 的上游行为：只有注册设备号 + 六个签名头 + 单集 video_model 有内容。
 func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 	const videoID = "7694655440692448281"
 	var body map[string]any
@@ -30,7 +29,8 @@ func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
 		}
 		if request.URL.Path != hongguoVideoModelPath {
-			t.Errorf("path %s", request.URL.Path)
+			// 其他取流组合模拟成上游的空正文，确认会落到单集签名组合。
+			return rankingHTTPResponse(request, 200, ""), nil
 		}
 		for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Ladon", "X-Argus", "X-Helios", "X-Medusa"} {
 			if request.Header.Get(name) == "" {
@@ -61,11 +61,14 @@ func TestHongguoPlaybackRequestSignsWithRegisteredDevice(t *testing.T) {
 	}
 }
 
-func TestHongguoRegisteredMediaFallsBackToUnsigned(t *testing.T) {
+// 2026-11-13 实测：签名请求一律回空，注册设备 + 无签名 multi_video_model 可用。
+// 默认顺序必须先试无签名组合，一次注册、一次请求就拿到流，不浪费签名请求。
+func TestHongguoRegisteredMediaPrefersUnsignedMulti(t *testing.T) {
 	const videoID = "7694655440692448281"
-	var signed, unsigned int
+	var signed, unsigned, registers int
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		if strings.Contains(request.URL.Path, "device_register") {
+			registers++
 			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
 		}
 		if request.Header.Get("X-Argus") != "" {
@@ -73,14 +76,14 @@ func TestHongguoRegisteredMediaFallsBackToUnsigned(t *testing.T) {
 			return rankingHTTPResponse(request, 200, ""), nil
 		}
 		unsigned++
-		if request.Header.Get("User-Agent") != hongguoPlaybackUserAgent {
-			t.Errorf("ua %s", request.Header.Get("User-Agent"))
+		if request.Header.Get("User-Agent") != hongguoPlaybackUserAgent || request.URL.Path != hongguoMediaPath {
+			t.Errorf("ua %s path %s", request.Header.Get("User-Agent"), request.URL.Path)
 		}
 		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+videoID+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/unsigned.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
 	})
 	media, err := d.resolveHongguoRegisteredMedia(context.Background(), videoID)
-	if err != nil || media.URL != "https://cdn.example/unsigned.mp4" || signed == 0 || unsigned == 0 {
-		t.Fatalf("%v signed %d unsigned %d %+v", err, signed, unsigned, media)
+	if err != nil || media.URL != "https://cdn.example/unsigned.mp4" || signed != 0 || unsigned != 1 || registers != 1 {
+		t.Fatalf("%v signed %d unsigned %d registers %d %+v", err, signed, unsigned, registers, media)
 	}
 }
 
@@ -251,7 +254,62 @@ func TestHongguoRegisteredMediaUsesSingleVideoModelFirst(t *testing.T) {
 			t.Fatalf("%s: %v %+v", video, err, media)
 		}
 	}
-	if registers != len(videos) || multiCalls != 0 {
+	// 第一集先试默认的多集无签名（一台设备、两个接入域名），失败后单集签名成功并被记住；
+	// 之后每集直接走单集签名，每集只注册一台设备。
+	if registers != len(videos)+1 || multiCalls != 2 {
 		t.Fatalf("registers %d multi calls %d", registers, multiCalls)
+	}
+}
+
+// 上游中途换可用组合（单集签名 → 多集无签名）时，连续换集都要能取到流，并且会改记新组合。
+func TestHongguoRegisteredMediaFollowsUpstreamRotation(t *testing.T) {
+	videos := []string{"7694655440692448281", "7694655440692448282", "7694655440692448283", "7694655440692448284"}
+	signedEra := true
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
+		}
+		raw, _ := io.ReadAll(request.Body)
+		isSigned := request.Header.Get("X-Medusa") != ""
+		ok := (signedEra && isSigned && request.URL.Path == hongguoVideoModelPath) || (!signedEra && !isSigned && request.URL.Path == hongguoMediaPath)
+		if !ok {
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		video := ""
+		for _, candidate := range videos {
+			if strings.Contains(string(raw), candidate) {
+				video = candidate
+			}
+		}
+		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+video+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/`+video+`.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
+	})
+	for index, video := range videos {
+		signedEra = index < 2
+		media, err := d.resolveHongguoRegisteredMedia(context.Background(), video)
+		if err != nil || media.URL != "https://cdn.example/"+video+".mp4" {
+			t.Fatalf("%s: %v %+v", video, err, media)
+		}
+	}
+	if order := d.hongguoPlaybackStrategyOrder(); hongguoPlaybackStrategies[order[0]].signed {
+		t.Fatalf("still prefers %s", hongguoPlaybackStrategies[order[0]].name)
+	}
+}
+
+// 所有组合都回空时，错误里要逐项写出每种组合的结果，方便用户反馈后定位。
+func TestHongguoRegisteredMediaReportsEveryStrategy(t *testing.T) {
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "device_register") {
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"7123456789012345","install_id_str":"7123456789012346"}`), nil
+		}
+		return rankingHTTPResponse(request, 200, ""), nil
+	})
+	_, err := d.resolveHongguoRegisteredMedia(context.Background(), "7694655440692448281")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, strategy := range hongguoPlaybackStrategies {
+		if !strings.Contains(err.Error(), strategy.name+"：") {
+			t.Fatalf("missing %s in %v", strategy.name, err)
+		}
 	}
 }
