@@ -183,72 +183,92 @@ func hongguoRegisterBody(now int64, cdid string) ([]byte, error) {
 	return append(append([]byte{0x74, 0x63, 0x05, 0x10, 0x00, 0x00}, random...), encrypted...), nil
 }
 
-// hongguoRegisteredMediaAttempts 是一次取流最多换几台新设备。偶尔新设备的第一次请求也会回空，
-// 换一台重试即可。
-const hongguoRegisteredMediaAttempts = 3
-
-// resolveHongguoRegisteredMedia 每次取流用一台新注册的设备；失败再换新设备重试。
-func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
-	var lastErr error
-	for attempt := 0; attempt < hongguoRegisteredMediaAttempts; attempt++ {
-		device, err := downloader.hongguoPlaybackDevice(ctx)
-		if err != nil {
-			if lastErr == nil {
-				return providerMedia{}, err
-			}
-			break
-		}
-		media, err := downloader.resolveHongguoRegisteredMediaWith(ctx, device, videoID)
-		if err == nil || ctx.Err() != nil {
-			return media, err
-		}
-		lastErr = err
-	}
-	return providerMedia{}, lastErr
+// 上游每隔几天换一次可用的取流组合（11-02 起签名 multi、11-10 起签名 video_model、
+// 11-13 签名全部回空而注册设备 + 无签名 multi 可用），其余组合回 HTTP 200 空正文。
+// 每种组合用一台新注册设备，记住上次成功的组合优先使用。
+type hongguoPlaybackStrategy struct {
+	name        string
+	signed      bool
+	videoModel  bool
+	contentType string
 }
 
-func (downloader *Downloader) resolveHongguoRegisteredMediaWith(ctx context.Context, device hongguoPlaybackDevice, videoID string) (providerMedia, error) {
-	var lastErr error
-	// 先走单集 video_model（当前唯一可用的接口），再退回旧的 multi_video_model。
-	// 注册设备只有第一次取流有效，所以单集接口必须排在最前面。
-	for _, contentType := range []string{"", "1004", "1"} {
+var hongguoPlaybackStrategies = []hongguoPlaybackStrategy{
+	{name: "多集无签名", contentType: "1004"},
+	{name: "单集签名", signed: true, videoModel: true},
+	{name: "多集签名", signed: true, contentType: "1004"},
+	{name: "多集无签名(1)", contentType: "1"},
+	{name: "多集签名(1)", signed: true, contentType: "1"},
+}
+
+func (downloader *Downloader) hongguoPlaybackStrategyOrder() []int {
+	client := downloader.hongguoClient()
+	client.mu.Lock()
+	preferred := client.playbackStrategy
+	client.mu.Unlock()
+	order := make([]int, 0, len(hongguoPlaybackStrategies))
+	if preferred >= 0 && preferred < len(hongguoPlaybackStrategies) {
+		order = append(order, preferred)
+	}
+	for index := range hongguoPlaybackStrategies {
+		if index != preferred {
+			order = append(order, index)
+		}
+	}
+	return order
+}
+
+func (downloader *Downloader) rememberHongguoPlaybackStrategy(index int) {
+	client := downloader.hongguoClient()
+	client.mu.Lock()
+	client.playbackStrategy = index
+	client.mu.Unlock()
+}
+
+func (downloader *Downloader) hongguoStrategyRequest(ctx context.Context, strategy hongguoPlaybackStrategy, device hongguoPlaybackDevice, videoID string) (map[string]any, error) {
+	switch {
+	case strategy.videoModel:
+		return downloader.hongguoSignedRegisteredVideoModel(ctx, device, videoID)
+	case strategy.signed:
+		return downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, strategy.contentType)
+	default:
+		return downloader.hongguoUnsignedMedia(ctx, device, videoID, strategy.contentType)
+	}
+}
+
+// resolveHongguoRegisteredMedia 按“上次成功的组合优先”依次尝试各取流组合，每种组合用一台新注册设备。
+func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
+	var failures []string
+	for _, index := range downloader.hongguoPlaybackStrategyOrder() {
+		if err := ctx.Err(); err != nil {
+			return providerMedia{}, err
+		}
+		strategy := hongguoPlaybackStrategies[index]
+		device, err := downloader.hongguoPlaybackDevice(ctx)
+		if err != nil {
+			if len(failures) == 0 {
+				return providerMedia{}, err
+			}
+			failures = append(failures, strategy.name+"："+err.Error())
+			break
+		}
+		result, err := downloader.hongguoStrategyRequest(ctx, strategy, device, videoID)
+		if err == nil {
+			var media providerMedia
+			if media, err = downloader.hongguoRegisteredResultMedia(ctx, result, videoID); err == nil {
+				downloader.rememberHongguoPlaybackStrategy(index)
+				return media, nil
+			}
+		}
 		if ctx.Err() != nil {
 			return providerMedia{}, ctx.Err()
 		}
-		if contentType == "" {
-			result, err := downloader.hongguoSignedRegisteredVideoModel(ctx, device, videoID)
-			if err == nil {
-				var media providerMedia
-				if media, err = downloader.hongguoRegisteredResultMedia(ctx, result, videoID); err == nil {
-					return media, nil
-				}
-			}
-			lastErr = err
-			continue
-		}
-		result, err := downloader.hongguoSignedRegisteredMedia(ctx, device, videoID, contentType)
-		if err != nil && ctx.Err() == nil {
-			signedErr := err
-			result, err = downloader.hongguoUnsignedMedia(ctx, device, videoID, contentType)
-			if err != nil {
-				err = fmt.Errorf("%v；无签名重试：%v", signedErr, err)
-			}
-		}
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		media, err := downloader.hongguoRegisteredResultMedia(ctx, result, videoID)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return media, nil
+		failures = append(failures, strategy.name+"："+err.Error())
 	}
-	if lastErr == nil {
-		lastErr = errors.New("红果注册设备未返回正片")
+	if len(failures) == 0 {
+		return providerMedia{}, errors.New("红果注册设备未返回正片")
 	}
-	return providerMedia{}, lastErr
+	return providerMedia{}, errors.New(strings.Join(failures, "；"))
 }
 
 func (downloader *Downloader) hongguoRegisteredResultMedia(ctx context.Context, result map[string]any, videoID string) (providerMedia, error) {
