@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "revision": 2026111401,
+  "minCoreLevel": 1,
+  "note": "红果取流策略。修改后提高 revision；字段说明见 README「红果远程配置」。",
+  "strategies": ["multi_unsigned", "video_model_signed", "multi_signed", "multi_unsigned_1", "multi_signed_1"],
+  "probeDevices": 10,
+  "reuseDevice": true,
+  "deviceTTLHours": 12,
+  "refreshHours": 6,
+  "paths": {
+    "videoModel": "/novel/player/video_model/v1/",
+    "multiVideoModel": "/novel/player/multi_video_model/v1/"
+  },
+  "playback": {
+    "versionCode": "71332",
+    "versionName": "7.1.3.32",
+    "userAgent": "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)"
+  }
+}

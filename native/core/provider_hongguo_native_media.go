@@ -31,7 +31,7 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 	}
 	payload := hongguoVideoModelPayload(videoID)
 	ctx = context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
-	result, err := downloader.hongguoAppRequestOrdered(ctx, http.MethodPost, hongguoVideoModelPath, url.Values{
+	result, err := downloader.hongguoAppRequestOrdered(ctx, http.MethodPost, downloader.hongguoConfig().Paths.VideoModel, url.Values{
 		"device_id": {deviceID}, "iid": {deviceID},
 	}, payload, false)
 	if err != nil {
