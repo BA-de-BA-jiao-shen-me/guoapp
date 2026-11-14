@@ -19,27 +19,28 @@ import (
 )
 
 type Config struct {
-	dataDir          string
-	MaxPagesPerSort  int
-	PageSize         int
-	Retries          int
-	InsecureTLS      bool
-	HuangguoAIURL    string
-	HuangguoVideoURL string
-	HuangdouURL      string
-	HongguoURL       string
-	HuangjuURL       string
-	HuangjuAPIURL    string
-	YeguoURL         string
-	YeguoAPIURL      string
-	DSDURL           string
-	Token            string
-	AESKeyHex        string
-	InterfaceKey     string
-	ParamKey         string
-	ParamIV          string
-	APIBase          string
-	CDNURL           string
+	dataDir           string
+	hongguoConfigURLs []string
+	MaxPagesPerSort   int
+	PageSize          int
+	Retries           int
+	InsecureTLS       bool
+	HuangguoAIURL     string
+	HuangguoVideoURL  string
+	HuangdouURL       string
+	HongguoURL        string
+	HuangjuURL        string
+	HuangjuAPIURL     string
+	YeguoURL          string
+	YeguoAPIURL       string
+	DSDURL            string
+	Token             string
+	AESKeyHex         string
+	InterfaceKey      string
+	ParamKey          string
+	ParamIV           string
+	APIBase           string
+	CDNURL            string
 }
 
 type Downloader struct {
@@ -56,6 +57,7 @@ type Downloader struct {
 	proxyRouter            *proxyRouter
 	hongguoOnce            sync.Once
 	hongguo                *hongguoAppClient
+	hongguoConfigState     hongguoConfigState
 	huangjuOnce            sync.Once
 	huangju                *huangjuAPIClient
 	yeguoOnce              sync.Once
@@ -258,6 +260,7 @@ func newNativeEngine(directory string) (*nativeEngine, error) {
 	}
 	cfg := defaultConfig()
 	cfg.dataDir = directory
+	cfg.hongguoConfigURLs = hongguoRemoteConfigURLs()
 	router := &proxyRouter{}
 	d := &Downloader{cfg: cfg, providerHosts: map[string]string{}, proxyRouter: router,
 		limiter: newRequestLimiter(3, 250*time.Millisecond), diagnostics: newDiagnosticLog(directory)}

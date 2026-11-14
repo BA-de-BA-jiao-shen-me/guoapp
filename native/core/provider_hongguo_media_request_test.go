@@ -78,7 +78,7 @@ func TestHongguoRegisteredMediaPrefersUnsignedMulti(t *testing.T) {
 			return rankingHTTPResponse(request, 200, ""), nil
 		}
 		unsigned++
-		if request.Header.Get("User-Agent") != hongguoPlaybackUserAgent || request.URL.Path != hongguoMediaPath {
+		if request.Header.Get("User-Agent") != hongguoBundledConfig().Playback.UserAgent || request.URL.Path != hongguoMediaPath {
 			t.Errorf("ua %s path %s", request.Header.Get("User-Agent"), request.URL.Path)
 		}
 		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+videoID+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/unsigned.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
@@ -372,7 +372,7 @@ func TestHongguoRegisteredMediaReusesVerifiedDevice(t *testing.T) {
 func TestHongguoProbeStrategyInterleavesPreferred(t *testing.T) {
 	order := []int{3, 0, 1, 2, 4}
 	var got []int
-	for probe := 0; probe < hongguoPlaybackProbeDevices; probe++ {
+	for probe := 0; probe < 10; probe++ {
 		got = append(got, hongguoProbeStrategy(order, probe))
 	}
 	want := []int{3, 0, 3, 1, 3, 2, 3, 4, 3, 3}

@@ -61,15 +61,17 @@ type hongguoAppClient struct {
 	danmaku        map[string]hongguoDanmakuCacheEntry
 	danmakuPending map[string]*hongguoDanmakuCall
 	// playbackStrategy 是上次取流成功的 hongguoPlaybackStrategies 下标。
-	playbackStrategy int
-	playbackMu       sync.Mutex
-	playbackDevice   *hongguoPlaybackDevice
+	playbackStrategy     int
+	playbackMu           sync.Mutex
+	playbackDevice       *hongguoPlaybackDevice
+	playbackSavedAt      time.Time
+	playbackDeviceLoaded bool
 }
 
 func (downloader *Downloader) hongguoClient() *hongguoAppClient {
 	downloader.hongguoOnce.Do(func() {
 		downloader.hongguo = &hongguoAppClient{
-			baseURL: hongguoAppBaseURL,
+			baseURL: hongguoAppBaseURL, playbackStrategy: -1,
 			state:   hongguoCatalogState{Version: 1, DeviceID: newHongguoDeviceID(), InstallID: newHongguoDeviceID(), Feeds: map[string]hongguoCatalogCursor{}},
 			details: map[string]hongguoDetailEntry{}, pending: map[string]*hongguoDetailCall{},
 			searches: map[string]hongguoSearchEntry{}, searchPending: map[string]*hongguoSearchCall{},

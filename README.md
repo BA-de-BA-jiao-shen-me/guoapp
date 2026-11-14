@@ -92,3 +92,24 @@ flutter run
 ```
 
 Windows 把 `--platform` 换成 `windows`，然后执行 `flutter run -d windows`。全部站源构建给原生构建加上 `--all-sources`，给 Flutter 加上 `--dart-define=ALL_SOURCES=true`。换回默认构建时要重新构建默认核心，不要和全部站源构建的原生库混用。
+
+## 红果远程配置
+
+红果取流方式由 `config/hongguo-remote-config.json` 控制，应用不用重新打包就能改顺序、停用失效的方式、调整探测设备数和接口路径。原生核心内置同一份文件（`native/core/hongguo_remote_config.json`，测试会检查两份一致），启动后在后台依次尝试 raw.githubusercontent.com、jsDelivr（cdn / gcore / fastly），都失败时再试第三方加速代理 gh-proxy.com、ghfast.top；第一份通过校验的配置生效，每次请求最多等 8 秒，不阻塞播放。通过校验的配置写入数据目录的 `hongguo_remote_config.json`，下次启动直接使用。
+
+修改步骤：改 `config/hongguo-remote-config.json`，**把 `revision` 调大**（比当前小的配置不会生效），再推送到 main。raw.githubusercontent.com 约 5 分钟内更新；jsDelivr 对分支最长缓存约 12 小时，可以打开 `https://purge.jsdelivr.net/gh/BA-de-BA-jiao-shen-me/guoapp@main/config/hongguo-remote-config.json` 刷新。客户端按 `refreshHours` 定期重新拉取。
+
+| 字段 | 说明与范围 |
+| --- | --- |
+| `schema` | 固定为 1 |
+| `revision` | `YYYYMMDDNN` 格式（例如 2026111501），日期不能晚于两天后；只接受不小于当前的值 |
+| `minCoreLevel` | 需要的核心能力等级；高于应用所带核心时整份配置不生效（当前核心为 1） |
+| `strategies` | 取流方式及顺序：`multi_unsigned`、`video_model_signed`、`multi_signed`、`multi_unsigned_1`、`multi_signed_1`；不认识的名称跳过，至少要有一个认识的 |
+| `probeDevices` | 已验证设备失效后最多注册几台新设备，1–20 |
+| `reuseDevice` | 是否复用并保存验证可用的设备 |
+| `deviceTTLHours` | 保存的设备多久后作废，0–168；0 表示不跨重启保存 |
+| `refreshHours` | 多久重新拉取一次配置，1–168 |
+| `paths.videoModel` / `paths.multiVideoModel` | 取流接口路径，必须是 `/novel/player/…/` 形式 |
+| `playback.versionCode` / `versionName` / `userAgent` | 无签名取流使用的版本参数和 User-Agent |
+
+配置里不放任何密钥。不认识的字段会被忽略，任一字段不合法时整份配置丢弃，继续用缓存或内置配置。调试时可用环境变量 `DUANJU_HONGGUO_CONFIG_URLS`（逗号分隔，https 或本机 http）替换拉取地址。验证可用的设备另存为数据目录的 `hongguo_playback_device.json`。

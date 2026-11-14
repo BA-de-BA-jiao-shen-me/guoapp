@@ -25,8 +25,6 @@ var errHongguoDeviceRegister = errors.New("红果播放设备注册失败")
 
 const hongguoRegisterURL = "https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin&use_store_region_cookie=1"
 
-const hongguoPlaybackUserAgent = "com.phoenix.read/71532 (Linux; U; Android 9; SM-N9860; Build/PQ3A.190705.10241111;tt-ok/3.12.13.20)"
-
 var hongguoRegisterSalt = []byte{
 	0x4d, 0xd4, 0xc2, 0xe6, 0xb8, 0x31, 0x62, 0x09, 0x0e, 0x52, 0xb3, 0xc7, 0xa6, 0x73, 0x3b, 0xa4,
 	0x1c, 0xb2, 0x46, 0x2b, 0x82, 0x9a, 0xb5, 0x8a, 0x19, 0x6b, 0x39, 0xdb, 0x57, 0x17, 0x75, 0x24,
@@ -188,6 +186,7 @@ func hongguoRegisterBody(now int64, cdid string) ([]byte, error) {
 // 11-14 实测：新注册设备约一半能取流、一半一律回空，好坏在几分钟内不变，能取流的设备可连续取任意集。
 // 所以缓存一台验证可用的设备反复使用，失效再注册新设备探测，并记住可用的组合。
 type hongguoPlaybackStrategy struct {
+	id          string
 	name        string
 	signed      bool
 	videoModel  bool
@@ -195,23 +194,27 @@ type hongguoPlaybackStrategy struct {
 }
 
 var hongguoPlaybackStrategies = []hongguoPlaybackStrategy{
-	{name: "多集无签名", contentType: "1004"},
-	{name: "单集签名", signed: true, videoModel: true},
-	{name: "多集签名", signed: true, contentType: "1004"},
-	{name: "多集无签名(1)", contentType: "1"},
-	{name: "多集签名(1)", signed: true, contentType: "1"},
+	{id: "multi_unsigned", name: "多集无签名", contentType: "1004"},
+	{id: "video_model_signed", name: "单集签名", signed: true, videoModel: true},
+	{id: "multi_signed", name: "多集签名", signed: true, contentType: "1004"},
+	{id: "multi_unsigned_1", name: "多集无签名(1)", contentType: "1"},
+	{id: "multi_signed_1", name: "多集签名(1)", signed: true, contentType: "1"},
 }
 
+// hongguoPlaybackStrategyOrder 按远程配置启用的方式和顺序排列，上次成功的方式（若仍启用）排最前。
 func (downloader *Downloader) hongguoPlaybackStrategyOrder() []int {
+	enabled := downloader.hongguoConfig().strategyIndexes
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	preferred := client.playbackStrategy
 	client.mu.Unlock()
-	order := make([]int, 0, len(hongguoPlaybackStrategies))
-	if preferred >= 0 && preferred < len(hongguoPlaybackStrategies) {
-		order = append(order, preferred)
+	order := make([]int, 0, len(enabled))
+	for _, index := range enabled {
+		if index == preferred {
+			order = append(order, index)
+		}
 	}
-	for index := range hongguoPlaybackStrategies {
+	for _, index := range enabled {
 		if index != preferred {
 			order = append(order, index)
 		}
@@ -236,8 +239,6 @@ func (downloader *Downloader) hongguoStrategyRequest(ctx context.Context, strate
 		return downloader.hongguoUnsignedMedia(ctx, device, videoID, strategy.contentType)
 	}
 }
-
-const hongguoPlaybackProbeDevices = 10
 
 func (downloader *Downloader) hongguoTryPlayback(ctx context.Context, device hongguoPlaybackDevice, index int, videoID string) (providerMedia, error) {
 	result, err := downloader.hongguoStrategyRequest(ctx, hongguoPlaybackStrategies[index], device, videoID)
@@ -289,17 +290,36 @@ func (log *hongguoFailureLog) String() string {
 	return strings.Join(parts, "；")
 }
 
-// resolveHongguoRegisteredMedia 先用缓存的可用设备；失效后最多注册 hongguoPlaybackProbeDevices 台新设备，
+// resolveHongguoRegisteredMedia 先用缓存的可用设备（可跨重启保存）；失效后最多注册 probeDevices 台新设备，
 // 每台新设备只发一次取流请求，成功的设备和组合都记下来供后续分集复用。
 func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
 	client := downloader.hongguoClient()
 	client.playbackMu.Lock()
 	defer client.playbackMu.Unlock()
+	config := downloader.hongguoConfig()
+	if !client.playbackDeviceLoaded {
+		client.playbackDeviceLoaded = true
+		if saved, strategy, verifiedAt := downloader.loadHongguoSavedDevice(config); saved != nil {
+			client.playbackDevice, client.playbackSavedAt = saved, verifiedAt
+			for index, candidate := range hongguoPlaybackStrategies {
+				if candidate.id == strategy {
+					downloader.rememberHongguoPlaybackStrategy(index)
+				}
+			}
+		}
+	}
+	if !config.ReuseDevice {
+		client.playbackDevice = nil
+	}
 	order := downloader.hongguoPlaybackStrategyOrder()
 	var failures hongguoFailureLog
 	if cached := client.playbackDevice; cached != nil {
 		media, err := downloader.hongguoTryPlayback(ctx, *cached, order[0], videoID)
 		if err == nil {
+			if time.Since(client.playbackSavedAt) > 30*time.Minute {
+				downloader.saveHongguoDevice(*cached, hongguoPlaybackStrategies[order[0]].id, config)
+				client.playbackSavedAt = time.Now()
+			}
 			return media, nil
 		}
 		if ctx.Err() != nil {
@@ -307,8 +327,9 @@ func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context,
 		}
 		failures.add("已验证设备"+hongguoPlaybackStrategies[order[0]].name, err)
 		client.playbackDevice = nil
+		downloader.forgetHongguoDevice()
 	}
-	for probe := 0; probe < hongguoPlaybackProbeDevices; probe++ {
+	for probe := 0; probe < config.ProbeDevices; probe++ {
 		if err := ctx.Err(); err != nil {
 			return providerMedia{}, err
 		}
@@ -324,7 +345,10 @@ func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context,
 		media, err := downloader.hongguoTryPlayback(ctx, device, index, videoID)
 		if err == nil {
 			downloader.rememberHongguoPlaybackStrategy(index)
-			client.playbackDevice = &device
+			if config.ReuseDevice {
+				client.playbackDevice, client.playbackSavedAt = &device, time.Now()
+				downloader.saveHongguoDevice(device, hongguoPlaybackStrategies[index].id, config)
+			}
 			return media, nil
 		}
 		if ctx.Err() != nil {
@@ -372,7 +396,7 @@ func hongguoVideoModelPayload(videoID string) map[string]any {
 // hongguoSignedRegisteredVideoModel 用新注册的设备带签名请求单集 video_model。
 func (downloader *Downloader) hongguoSignedRegisteredVideoModel(ctx context.Context, device hongguoPlaybackDevice, videoID string) (map[string]any, error) {
 	signed := context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
-	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, hongguoVideoModelPath, url.Values{
+	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, downloader.hongguoConfig().Paths.VideoModel, url.Values{
 		"device_id": {device.DeviceID}, "iid": {device.Install},
 	}, hongguoVideoModelPayload(videoID), false)
 }
@@ -390,7 +414,7 @@ func (downloader *Downloader) hongguoSignedRegisteredMedia(ctx context.Context, 
 		"mixed_video_id_map": map[string]any{contentType: []string{videoID}},
 	}
 	signed := context.WithValue(ctx, hongguoPlaybackSignKey{}, true)
-	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, hongguoMediaPath, url.Values{
+	return downloader.hongguoAppRequestOrdered(signed, http.MethodPost, downloader.hongguoConfig().Paths.MultiVideoModel, url.Values{
 		"device_id": {device.DeviceID}, "iid": {device.Install},
 	}, payload, false)
 }
@@ -407,14 +431,15 @@ func (downloader *Downloader) hongguoUnsignedMedia(ctx context.Context, device h
 	if err != nil {
 		return nil, err
 	}
+	config := downloader.hongguoConfig()
 	var lastErr error
 	for _, base := range hongguoAppBases(false) {
-		endpoint := strings.TrimRight(base, "/") + hongguoMediaPath + "?" + hongguoPlaybackQuery(device)
+		endpoint := strings.TrimRight(base, "/") + config.Paths.MultiVideoModel + "?" + hongguoPlaybackQuery(device, config)
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
-		request.Header.Set("User-Agent", hongguoPlaybackUserAgent)
+		request.Header.Set("User-Agent", config.Playback.UserAgent)
 		request.Header.Set("Accept", "application/json; charset=utf-8,application/x-protobuf")
 		request.Header.Set("Content-Type", "application/json; charset=UTF-8")
 		response, err := downloader.doCatalogRequestWithTimeout(request, 15*time.Second)
@@ -462,14 +487,15 @@ func (downloader *Downloader) hongguoUnsignedMedia(ctx context.Context, device h
 	return nil, lastErr
 }
 
-func hongguoPlaybackQuery(device hongguoPlaybackDevice) string {
+func hongguoPlaybackQuery(device hongguoPlaybackDevice, config *hongguoRemoteConfig) string {
+	code, name := config.Playback.VersionCode, config.Playback.VersionName
 	pairs := [][2]string{
 		{"ac", "wifi"}, {"channel", "update_64"}, {"aid", "8662"}, {"app_name", "novelread"},
-		{"version_code", "71332"}, {"version_name", "7.1.3.32"}, {"device_platform", "android"},
+		{"version_code", code}, {"version_name", name}, {"device_platform", "android"},
 		{"os", "android"}, {"ssmix", "a"}, {"device_type", "25053RT47C"}, {"device_brand", "Redmi"},
-		{"language", "zh"}, {"os_api", "36"}, {"os_version", "16"}, {"manifest_version_code", "71332"},
-		{"resolution", "1280*2772"}, {"dpi", "520"}, {"update_version_code", "71332"},
-		{"host_abi", "arm64-v8a"}, {"dragon_device_type", "phone"}, {"pv_player", "71332"},
+		{"language", "zh"}, {"os_api", "36"}, {"os_version", "16"}, {"manifest_version_code", code},
+		{"resolution", "1280*2772"}, {"dpi", "520"}, {"update_version_code", code},
+		{"host_abi", "arm64-v8a"}, {"dragon_device_type", "phone"}, {"pv_player", code},
 		{"compliance_status", "0"}, {"need_personal_recommend", "1"}, {"player_so_load", "1"},
 		{"is_android_pad_screen", "0"}, {"device_id", device.DeviceID}, {"iid", device.Install},
 		{"_rticket", strconv.FormatInt(time.Now().UnixMilli(), 10)},
