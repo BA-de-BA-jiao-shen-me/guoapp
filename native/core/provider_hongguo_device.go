@@ -184,8 +184,9 @@ func hongguoRegisterBody(now int64, cdid string) ([]byte, error) {
 }
 
 // 上游每隔几天换一次可用的取流组合（11-02 起签名 multi、11-10 起签名 video_model、
-// 11-13 签名全部回空而注册设备 + 无签名 multi 可用），其余组合回 HTTP 200 空正文。
-// 每种组合用一台新注册设备，记住上次成功的组合优先使用。
+// 11-13 起签名全部回空而注册设备 + 无签名 multi 可用），其余组合回 HTTP 200 空正文。
+// 11-14 实测：新注册设备约一半能取流、一半一律回空，好坏在几分钟内不变，能取流的设备可连续取任意集。
+// 所以缓存一台验证可用的设备反复使用，失效再注册新设备探测，并记住可用的组合。
 type hongguoPlaybackStrategy struct {
 	name        string
 	signed      bool
@@ -236,39 +237,105 @@ func (downloader *Downloader) hongguoStrategyRequest(ctx context.Context, strate
 	}
 }
 
-// resolveHongguoRegisteredMedia 按“上次成功的组合优先”依次尝试各取流组合，每种组合用一台新注册设备。
+const hongguoPlaybackProbeDevices = 10
+
+func (downloader *Downloader) hongguoTryPlayback(ctx context.Context, device hongguoPlaybackDevice, index int, videoID string) (providerMedia, error) {
+	result, err := downloader.hongguoStrategyRequest(ctx, hongguoPlaybackStrategies[index], device, videoID)
+	if err != nil {
+		return providerMedia{}, err
+	}
+	return downloader.hongguoRegisteredResultMedia(ctx, result, videoID)
+}
+
+// hongguoProbeStrategy 决定第 probe 台新设备试哪种组合：偶数次试排在最前的组合，
+// 奇数次轮流试其余组合，这样既能多抽几台设备，又能发现上游换了组合。
+func hongguoProbeStrategy(order []int, probe int) int {
+	if probe%2 == 0 || len(order) < 2 {
+		return order[0]
+	}
+	rest := order[1:]
+	if position := probe / 2; position < len(rest) {
+		return rest[position]
+	}
+	return order[0]
+}
+
+type hongguoFailureLog struct {
+	labels []string
+	counts map[string]int
+	errors map[string]string
+}
+
+func (log *hongguoFailureLog) add(label string, err error) {
+	if log.counts == nil {
+		log.counts, log.errors = map[string]int{}, map[string]string{}
+	}
+	if log.counts[label] == 0 {
+		log.labels = append(log.labels, label)
+	}
+	log.counts[label]++
+	log.errors[label] = err.Error()
+}
+
+func (log *hongguoFailureLog) String() string {
+	parts := make([]string, 0, len(log.labels))
+	for _, label := range log.labels {
+		if count := log.counts[label]; count > 1 {
+			parts = append(parts, fmt.Sprintf("%s（%d 台设备）：%s", label, count, log.errors[label]))
+		} else {
+			parts = append(parts, label+"："+log.errors[label])
+		}
+	}
+	return strings.Join(parts, "；")
+}
+
+// resolveHongguoRegisteredMedia 先用缓存的可用设备；失效后最多注册 hongguoPlaybackProbeDevices 台新设备，
+// 每台新设备只发一次取流请求，成功的设备和组合都记下来供后续分集复用。
 func (downloader *Downloader) resolveHongguoRegisteredMedia(ctx context.Context, videoID string) (providerMedia, error) {
-	var failures []string
-	for _, index := range downloader.hongguoPlaybackStrategyOrder() {
-		if err := ctx.Err(); err != nil {
-			return providerMedia{}, err
-		}
-		strategy := hongguoPlaybackStrategies[index]
-		device, err := downloader.hongguoPlaybackDevice(ctx)
-		if err != nil {
-			if len(failures) == 0 {
-				return providerMedia{}, err
-			}
-			failures = append(failures, strategy.name+"："+err.Error())
-			break
-		}
-		result, err := downloader.hongguoStrategyRequest(ctx, strategy, device, videoID)
+	client := downloader.hongguoClient()
+	client.playbackMu.Lock()
+	defer client.playbackMu.Unlock()
+	order := downloader.hongguoPlaybackStrategyOrder()
+	var failures hongguoFailureLog
+	if cached := client.playbackDevice; cached != nil {
+		media, err := downloader.hongguoTryPlayback(ctx, *cached, order[0], videoID)
 		if err == nil {
-			var media providerMedia
-			if media, err = downloader.hongguoRegisteredResultMedia(ctx, result, videoID); err == nil {
-				downloader.rememberHongguoPlaybackStrategy(index)
-				return media, nil
-			}
+			return media, nil
 		}
 		if ctx.Err() != nil {
 			return providerMedia{}, ctx.Err()
 		}
-		failures = append(failures, strategy.name+"："+err.Error())
+		failures.add("已验证设备"+hongguoPlaybackStrategies[order[0]].name, err)
+		client.playbackDevice = nil
 	}
-	if len(failures) == 0 {
+	for probe := 0; probe < hongguoPlaybackProbeDevices; probe++ {
+		if err := ctx.Err(); err != nil {
+			return providerMedia{}, err
+		}
+		device, err := downloader.hongguoPlaybackDevice(ctx)
+		if err != nil {
+			if len(failures.labels) == 0 {
+				return providerMedia{}, err
+			}
+			failures.add("注册新设备", err)
+			break
+		}
+		index := hongguoProbeStrategy(order, probe)
+		media, err := downloader.hongguoTryPlayback(ctx, device, index, videoID)
+		if err == nil {
+			downloader.rememberHongguoPlaybackStrategy(index)
+			client.playbackDevice = &device
+			return media, nil
+		}
+		if ctx.Err() != nil {
+			return providerMedia{}, ctx.Err()
+		}
+		failures.add(hongguoPlaybackStrategies[index].name, err)
+	}
+	if len(failures.labels) == 0 {
 		return providerMedia{}, errors.New("红果注册设备未返回正片")
 	}
-	return providerMedia{}, errors.New(strings.Join(failures, "；"))
+	return providerMedia{}, errors.New(failures.String())
 }
 
 func (downloader *Downloader) hongguoRegisteredResultMedia(ctx context.Context, result map[string]any, videoID string) (providerMedia, error) {

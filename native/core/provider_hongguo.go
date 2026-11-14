@@ -236,6 +236,9 @@ func (d *Downloader) resolveHongguoWebMedia(ctx context.Context, seriesID, video
 	pageURL := base + "/player/" + url.PathEscape(seriesID) + "/" + url.PathEscape(videoID)
 	body, err := d.fetchProviderText(ctx, pageURL, base+"/")
 	if err != nil {
+		if strings.HasSuffix(err.Error(), "HTTP 404") {
+			return providerMedia{}, errors.New("红果官网只公开前几集的试看页，本集没有网页地址")
+		}
 		return providerMedia{}, err
 	}
 	page := routerLoaderMap(parseRouterData(body), "player_", "player_page")
