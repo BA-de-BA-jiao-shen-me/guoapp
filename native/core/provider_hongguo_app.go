@@ -62,6 +62,8 @@ type hongguoAppClient struct {
 	danmakuPending map[string]*hongguoDanmakuCall
 	// playbackStrategy 是上次取流成功的 hongguoPlaybackStrategies 下标。
 	playbackStrategy int
+	playbackMu       sync.Mutex
+	playbackDevice   *hongguoPlaybackDevice
 }
 
 func (downloader *Downloader) hongguoClient() *hongguoAppClient {

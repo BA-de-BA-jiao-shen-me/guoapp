@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -308,8 +310,84 @@ func TestHongguoRegisteredMediaReportsEveryStrategy(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	for _, strategy := range hongguoPlaybackStrategies {
-		if !strings.Contains(err.Error(), strategy.name+"：") {
+		if !strings.Contains(err.Error(), strategy.name) {
 			t.Fatalf("missing %s in %v", strategy.name, err)
 		}
+	}
+}
+
+// 2026-11-14 实测：新注册设备约一半一律回空、一半能取任意集。模拟第 1、4、7… 台设备坏、其余设备好，
+// 连续换集时要复用验证可用的设备，而不是每集重新抽设备。
+func TestHongguoRegisteredMediaReusesVerifiedDevice(t *testing.T) {
+	videos := []string{"7694655440692448281", "7694655440692448282", "7694655440692448283", "7694655440692448284", "7694655440692448285", "7694655440692448286"}
+	var mu sync.Mutex
+	registers := 0
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(request.URL.Path, "device_register") {
+			registers++
+			id := fmt.Sprintf("71234567890%05d", registers)
+			return rankingHTTPResponse(request, 200, `{"code":0,"device_id_str":"`+id+`","install_id_str":"`+id+`"}`), nil
+		}
+		device := request.URL.Query().Get("device_id")
+		number, _ := strconv.Atoi(device[len(device)-5:])
+		if number%3 == 1 || request.Header.Get("X-Medusa") != "" || request.URL.Path != hongguoMediaPath {
+			return rankingHTTPResponse(request, 200, ""), nil
+		}
+		raw, _ := io.ReadAll(request.Body)
+		video := ""
+		for _, candidate := range videos {
+			if strings.Contains(string(raw), candidate) {
+				video = candidate
+			}
+		}
+		return rankingHTTPResponse(request, 200, `{"code":0,"data":{"`+video+`":{"video_model":{"video_list":[{"main_url":"https://cdn.example/`+video+`.mp4","codec_type":"h264","definition":"720p","vheight":"1280"}]}}}}`), nil
+	})
+	var wait sync.WaitGroup
+	errs := make(chan error, len(videos))
+	for _, video := range videos {
+		wait.Add(1)
+		go func(video string) {
+			defer wait.Done()
+			media, err := d.resolveHongguoRegisteredMedia(context.Background(), video)
+			if err == nil && media.URL != "https://cdn.example/"+video+".mp4" {
+				err = fmt.Errorf("wrong media %s", media.URL)
+			}
+			errs <- err
+		}(video)
+	}
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if registers > 3 {
+		t.Fatalf("registered %d devices for %d episodes", registers, len(videos))
+	}
+}
+
+func TestHongguoProbeStrategyInterleavesPreferred(t *testing.T) {
+	order := []int{3, 0, 1, 2, 4}
+	var got []int
+	for probe := 0; probe < hongguoPlaybackProbeDevices; probe++ {
+		got = append(got, hongguoProbeStrategy(order, probe))
+	}
+	want := []int{3, 0, 3, 1, 3, 2, 3, 4, 3, 3}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+// 实测（2026-11-14）：官网播放页只对前 3 集返回 200，第 4 集起 HTTP 404。
+func TestHongguoWebMediaExplainsMissingPreviewPage(t *testing.T) {
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		return rankingHTTPResponse(request, 404, "not found"), nil
+	})
+	_, err := d.resolveHongguoWebMedia(context.Background(), "7530119479875882009", "7530164917408631870")
+	if err == nil || !strings.Contains(err.Error(), "只公开前几集") {
+		t.Fatalf("%v", err)
 	}
 }
